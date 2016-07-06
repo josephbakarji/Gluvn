@@ -30,3 +30,10 @@ For compiling a non-GUI version, run `python Main.py`. In `Main.py`:
 ## GUI
 For a more intuitive usage of the glove, there is a GUI application using PyQt5 (not yet complete). This can be used by running `python gluvUI.py`.
 
+
+## Potential Applications
+- String instrument (e.g. violin) with pressure sensors for notes and accelerometer for vibrato
+- pressure sensors with accelerometer data triggering percussion instruments by shaking the hand (audio using PyAudio)
+- Accelerometer conductor baton for controlling playback speed in realtime (requires addition of playback capabilities)
+- General language (gesture sequences) for triggering specific musical events
+- Incorporating VMO for improvising with the gluvn!
