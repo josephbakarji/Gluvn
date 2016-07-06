@@ -3,15 +3,10 @@ import senstonote
 import queue
 from collections import deque
 import numpy as np
-#from pyqtgraph.Qt import QtCore, QtGui
-#import pyqtgraph as pg
 import time
 
 def main(simflag, pressflag, flexflag, chordflag, pnotes, fnotes):
     # Variables
-    wlport = '/dev/tty.usbserial-A8004ZZe'
-    port = '/dev/tty.usbmodem1411'
-    baud = 57600
 
 
     sensq = queue.Queue()

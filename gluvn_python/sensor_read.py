@@ -17,8 +17,7 @@ import math
 import queue
 from collections import deque
 import csv
-#import pyaudio
-#import midiout
+
 
 Data = namedtuple('Data', 'cs ax ay az gx gy gz f1 f2 f3 f4 f5 p1 p2 p3 p4 p5')
 n1 = Data( 'a', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -132,12 +131,8 @@ def write2file(filename, q):
 
 if __name__ == '__main__':
     
+    filename = 'rnd_glove_ypr_press.csv'
 
-    # Variables
-    port = '/dev/tty.usbmodem1411'
-    baud = 57600
-    
-    
     sensq = queue.Queue()
     dataq = queue.Queue()
     pressq = deque(maxlen = 10)
@@ -152,7 +147,7 @@ if __name__ == '__main__':
     SensorThread.start()
 
 
-    write2file('data/sim/rnd_glove_ypr_press.csv', dataq)
+    write2file('data/sim/' + filename, dataq)
 
             
             

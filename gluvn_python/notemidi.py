@@ -7,7 +7,7 @@ import mido
 import csv
 
 rtmidi = mido.Backend('mido.backends.rtmidi')
-output = rtmidi.open_output('IAC Driver tologic')
+output = rtmidi.open_output(IACDriver)
 
 note2num_dict = {}
 for key, val in csv.reader(open('data/tables/note2num.csv')):

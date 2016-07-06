@@ -3,24 +3,27 @@ import senstonote
 import queue
 from collections import deque
 import numpy as np
-#from pyqtgraph.Qt import QtCore, QtGui
-#import pyqtgraph as pg
 import time
 
 
-# Variables
-wlport = '/dev/tty.usbserial-A8004ZZe'
-port = '/dev/tty.usbmodem1411'
-baud = 57600
-
 # Toggle apps
-PressureNotes = 0
+PressureNotes = 1
 FlexNotes = 0
-FlexPitchChords = 1
+FlexPitchChords = 0
+# Notes
+n1 = ['C3', 'D3', 'E3', 'G3', 'A3']
+n2 = ['G3', 'A3', 'F4', 'D4', 'C4']
+# Thresholds
+pressTrigThresh = 20
+flexTrigThresh = 150
+flexChordthresh = 110 
+
 
 # simulate or actual
-sim = 0
+sim = 1
+simfile = 'rnd_glove_ypr_press.csv'
   
+
 
 # initialize queues
 sensq = queue.Queue()
@@ -38,7 +41,7 @@ if(sim == 0):
     ParseThread.start()
     SensorThread.start()
 else:
-    simThread = sensor_read.sim_glove('data/sim/rnd_glove_ypr_press.csv', imuq, flexq, pressq)
+    simThread = sensor_read.sim_glove('data/sim/' + simfile, imuq, flexq, pressq)
     simThread.start()
 
 # Wait for readings.
@@ -50,17 +53,15 @@ while (len(flexq) == 0 or len(imuq) == 0 or len(pressq) == 0):
 
 print('Apps Threads Starting ... ')
 if(PressureNotes):
-    PressTrigP = senstonote.WeighTrig(pressq, 20 * np.ones(len(pressq[0])), ['C3', 'D3', 'E3', 'G3', 'A3'])
+    PressTrigP = senstonote.WeighTrig(pressq, pressTrigThresh * np.ones(len(pressq[0])), n1)
     PressTrigP.start()
 
 if(FlexNotes):      
-    PressTrigF = senstonote.WeighTrig(flexq, 150 * np.ones(len(flexq[0])), ['G3', 'A3', 'F4', 'D4', 'C4'])
+    PressTrigF = senstonote.WeighTrig(flexq, flexTrigThresh * np.ones(len(flexq[0])), n2)
     PressTrigF.start()
    
-   
 if(FlexPitchChords):
-    flexthresh = 110 * np.ones(len(flexq[0]))        
-    FlexChord = senstonote.playchords(flexq, flexthresh, imuq, 10, 127)
+    FlexChord = senstonote.playchords(flexq, flexChordthresh * np.ones(len(flexq[0])) , imuq, 10, 127)
     FlexChord.start()
 
 
