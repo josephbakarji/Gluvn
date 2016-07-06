@@ -3,12 +3,14 @@
 # Introduction
 We use our hands to play most musical instruments. Why not make a hand-instrument? A combination of sensors mounted on a glove is used to generate sounds on a personal computer. The glove has 5 flex sensors (one along each finger), 5 pressure sensors (one on each finger tip), and an inertial measurement unit (MPU-6050) consisting of a 3-axis gyroscope and a 3-axis accelerometer. The sensors send analog data via a micro-controller (e.g. Arduino) to the serial port on a computer. The data then gets processed in real-time to create music. For a start, Python and Arduino are used to make it accessible to everyone and encourage developers to contribute. The basic functionality also requires a Digital Audio Workstation (DAW) like GarageBand, Logic or Ableton.
 
+![Gluvn Design](/fig/gluvn_design)
+
 #Setup
 
 ## Packages
 This package uses Python 3.5. The following packages are required 
-- [mido](https://pypi.python.org/pypi/mido/1.1.3) is used to send midi messages to a virtual instrument. Install by `pip install mido`.
-- [rtmidi](https://pypi.python.org/pypi/python-rtmidi/0.3.1a) is used as a backend for mido. Install by `pip install python-rtmidi`.
+- [mido](https://pypi.python.org/pypi/mido/1.1.3) is used to send midi messages to a virtual instrument. Install with `pip install mido`.
+- [rtmidi](https://pypi.python.org/pypi/python-rtmidi/0.3.1a) is used as a backend for mido. Install with `pip install python-rtmidi`.
 - [PyQt5](http://pyqt.sourceforge.net/Docs/PyQt5/) is used for an optional GUI. Install with `pip install pyqt5` and by following instructions [here](http://pyqt.sourceforge.net/Docs/PyQt5/installation.html).
 
 ## Virtual instrument
@@ -25,5 +27,6 @@ For compiling a non-GUI version, run `python Main.py`. In `Main.py`:
 - Simulation: if you don't have a glove, it is most convenient to use the simulation functionality. For `sim = 1` and a specified simulation file `simfile`, the program will read sensor data recorded from the glove in the `data/sim/` folder. Otherwise, if you are using the glove, set it to 0.
 - Recording: if you have the glove and want to record a file for future simulation, run `python sensor_read.py`. Your sensor data will be recorded in the `filename` you specify in the script.
 
-# GUI
-For a more intuitive usage of the glove, there is a GUI application using PyQt5 (not yet complete). This can be used by running `python gluvUI.py`. 
+## GUI
+For a more intuitive usage of the glove, there is a GUI application using PyQt5 (not yet complete). This can be used by running `python gluvUI.py`.
+
