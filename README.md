@@ -1,7 +1,9 @@
 
 
 # Introduction
-We use our hands to play most musical instruments. Why not make a hand-instrument? A combination of sensors mounted on a glove is used to generate sounds on a personal computer. The glove has 5 flex sensors (one along each finger), 5 pressure sensors (one on each finger tip), and an inertial measurement unit (MPU-6050) consisting of a 3-axis gyroscope and a 3-axis accelerometer. The sensors send analog data via a micro-controller (e.g. Arduino) to the serial port on a computer. The data then gets processed in real-time to create music. For a start, Python and Arduino are used to make it accessible to everyone and encourage developers to contribute. The basic functionality also requires a Digital Audio Workstation (DAW) like GarageBand, Logic or Ableton.
+We use our hands to play most musical instruments. Why not make a hand-instrument? Gluvn is short for glove instrument, designed to generate music. The Gluvn has 5 flex sensors (one along each finger), 5 pressure sensors (one on each finger tip), and an inertial measurement unit (MPU-6050) consisting of a 3-axis gyroscope and a 3-axis accelerometer. The sensors send analog data via a micro-controller (e.g. Arduino) to the serial port on a computer. The data then gets processed in real-time to create music. For a start, Python and Arduino are used to make it accessible to everyone and encourage developers to contribute. The basic functionality also requires a Digital Audio Workstation (DAW) like GarageBand, Logic or Ableton.
+
+Check out my latest [paper](https://arxiv.org/pdf/2001.09551.pdf) explaining how to train the Gluvn to play a virtual piano.
 
 
 #Setup
