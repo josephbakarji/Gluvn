@@ -4,6 +4,7 @@ import queue
 from collections import deque
 import numpy as np
 import time
+from __init__ import port, baud
 
 
 # Toggle apps
@@ -12,15 +13,15 @@ FlexNotes = 0
 FlexPitchChords = 0
 # Notes
 n1 = ['C3', 'D3', 'E3', 'G3', 'A3']
-n2 = ['G3', 'A3', 'F4', 'D4', 'C4']
+n2 = ['G3', 'A3', 'A#3', 'C4', 'D4']
 # Thresholds
 pressTrigThresh = 20
-flexTrigThresh = 150
+flexTrigThresh = 120
 flexChordthresh = 110 
 
 
 # simulate or actual
-sim = 1
+sim = 0
 simfile = 'rnd_glove_ypr_press.csv'
   
 
@@ -57,7 +58,7 @@ if(PressureNotes):
     PressTrigP.start()
 
 if(FlexNotes):      
-    PressTrigF = senstonote.WeighTrig(flexq, flexTrigThresh * np.ones(len(flexq[0])), n2)
+    PressTrigF = senstonote.WeighTrig(flexq, flexTrigThresh * np.ones(len(flexq[0])), n1)
     PressTrigF.start()
    
 if(FlexPitchChords):

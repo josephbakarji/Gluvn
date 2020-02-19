@@ -5,6 +5,7 @@ Created on Mar 20, 2016
 '''
 
 from __future__ import division
+from __init__ import port, baud
 import serial, time
 import numpy as np
 import random
@@ -19,7 +20,7 @@ from collections import deque
 import csv
 
 
-Data = namedtuple('Data', 'cs ax ay az gx gy gz f1 f2 f3 f4 f5 p1 p2 p3 p4 p5')
+Data = namedtuple('Data', 'cs yaw pitch roll gx gy gz f1 f2 f3 f4 f5 p1 p2 p3 p4 p5')
 n1 = Data( 'a', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 
 
@@ -79,7 +80,7 @@ def parse(sensq, dataq, imuq, flexq, pressq):
                 imuq.append(mydata[1:7])
                 flexq.append(mydata[7:12])
                 pressq.append(mydata[12:17])
-
+                #print(mydata)
 
 ##########################  python GLOVE EMULATOR ############################
 class sim_glove(Thread):
@@ -149,6 +150,4 @@ if __name__ == '__main__':
 
     write2file('data/sim/' + filename, dataq)
 
-            
-            
-            
+                

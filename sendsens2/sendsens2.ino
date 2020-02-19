@@ -40,14 +40,15 @@ void loop() {
         Serial.write((uint8_t)(gz >> 8)); Serial.write((uint8_t)(gz & 0xFF));
 
 
-        Serial.write((uint8_t)(constrain(map(analogRead(flpin[0]), 610, 450, 0, 255), 0, 255)));
-        Serial.write((uint8_t)(constrain(map(analogRead(flpin[1]), 660, 500, 0, 255), 0, 255)));
-        Serial.write((uint8_t)(constrain(map(analogRead(flpin[2]), 650, 490, 0, 255), 0, 255)));
-        Serial.write((uint8_t)(constrain(map(analogRead(flpin[3]), 630, 470, 0, 255), 0, 255)));
-        Serial.write((uint8_t)(constrain(map(analogRead(flpin[4]), 640, 480, 0, 255), 0, 255)));
+
+        Serial.write((uint8_t)(constrain(map(analogRead(flpin[0]), 500, 630, 0, 255), 0, 255)));
+        Serial.write((uint8_t)(constrain(map(analogRead(flpin[1]), 500, 630, 0, 255), 0, 255)));
+        Serial.write((uint8_t)(constrain(map(analogRead(flpin[2]), 500, 660, 0, 255), 0, 255)));
+        Serial.write((uint8_t)(constrain(map(analogRead(flpin[3]), 500, 630, 0, 255), 0, 255)));
+        Serial.write((uint8_t)(constrain(map(analogRead(flpin[4]), 500, 630, 0, 255), 0, 255)));
     
         for(int i = 0; i<5; i++){
-            Serial.write((uint8_t)(map(analogRead(prespin[i]), 685, 20, 0, 255)));
+            Serial.write((uint8_t)(constrain(map(analogRead(prespin[i]), 685, 150, 0, 255), 0, 255)));
         }
         Serial.write("\n");
 
@@ -65,7 +66,7 @@ void loop() {
 //        Serial.print("  ");
 //        Serial.print(mympu.gyro[2]);
 //        Serial.print("  ");
-//        
+//
 //        for(int i = 0; i<5; i++){
 //            Serial.print(analogRead(flpin[i]));
 //            Serial.print("  ");
