@@ -1,0 +1,6 @@
+include
+thumb
+pinky
+major
+ring
+index

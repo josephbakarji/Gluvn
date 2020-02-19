@@ -32,15 +32,26 @@ keyboardb = makeallnotes(nb,orange)
 
 
 tuplist = []
+tuplist_num2note = []
 for i in range(len(keyboards)):
     tuplist.append((keyboards[i], notename_to_midinum(keyboards[i])))
     tuplist.append((keyboardb[i], notename_to_midinum(keyboardb[i])))
 
+    tuplist_num2note.append((notename_to_midinum(keyboards[i]), keyboards[i]))
+
 tupdict = dict(tuplist)
+tupdict_num2note = dict(tuplist_num2note)
+
+w2 = csv.writer(open("../data/tables/num2note.csv", "w"))
+for key, val in tupdict_num2note.items():
+    w2.writerow([key, val])
 
 w = csv.writer(open("../data/tables/note2num.csv", "w"))
 for key, val in tupdict.items():
     w.writerow([key, val])
+
+
+
 
 dictest = {}
 for key, val in csv.reader(open("../data/tables/note2num.csv")):

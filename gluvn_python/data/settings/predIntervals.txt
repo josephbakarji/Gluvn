@@ -1,0 +1,8 @@
+exclude
+thumb
+pinky
+major
+ring
+index
+nonpred_int
+two_scales_rand

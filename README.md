@@ -1,11 +1,21 @@
 
-
 # Introduction
-We use our hands to play most musical instruments. Why not make a hand-instrument? A combination of sensors mounted on a glove is used to generate sounds on a personal computer. The glove has 5 flex sensors (one along each finger), 5 pressure sensors (one on each finger tip), and an inertial measurement unit (MPU-6050) consisting of a 3-axis gyroscope and a 3-axis accelerometer. The sensors send analog data via a micro-controller (e.g. Arduino) to the serial port on a computer. The data then gets processed in real-time to create music. For a start, Python and Arduino are used to make it accessible to everyone and encourage developers to contribute. The basic functionality also requires a Digital Audio Workstation (DAW) like GarageBand, Logic or Ableton.
+We use our hands to play most musical instruments. Why not make a hand-instrument? A combination of sensors mounted on a glove is used to generate sounds on a personal computer. 
+
+5 flex sensors, 5 force sensitive resistors, and an IMU are hooked up to the glove and send analog data via a micro-controller (e.g. Arduino) to the serial port on a computer.
+The data then gets processed in real-time to create music.
+For a start, Python and Arduino are used to make it accessible to everyone and encourage developers to contribute (or not). 
+The basic functionality also requires a Digital Audio Workstation (DAW) like GarageBand, Logic or Ableton.
+
+# Hardware
+## Sensors
+The glove has 
+- 5 [flex sensors](https://www.adafruit.com/product/1070) that measure the bending angle of each finger.
+- 5 [force sensitive resistors](https://www.adafruit.com/product/166) that measure the intensity of the pressure on the tip of each finger. 
+- An [inertial measurement unit](https://www.amazon.com/MPU-6050-MPU6050-Accelerometer-Gyroscope-Converter/dp/B008BOPN40) (MPU-6050) consisting of a 3-axis gyroscope and a 3-axis accelerometer, used in various ways depending on the application.
 
 
 #Setup
-
 ## Packages
 This package uses Python 3.5. The following packages are required 
 - [mido](https://pypi.python.org/pypi/mido/1.1.3) is used to send midi messages to a virtual instrument. Install with `pip install mido`.
@@ -36,3 +46,48 @@ For a more intuitive usage of the glove, there is a GUI application using PyQt5 
 - Accelerometer conductor baton for controlling playback speed in realtime (requires addition of playback capabilities)
 - General language (gesture sequences) for triggering specific musical events
 - Incorporating VMO for improvising with the gluvn!
+- Simulating percussion
+
+## Hardware improvements
+- High bandwidth RF channel for data transfer
+- Op-amp based sensor data conditioning to make pressure and bend sensors more sensitive
+- Cortex-M4, with DSP
+- 6 accelerometers
+
+
+# TO DO:
+### To do:
+- Play notes with vibrato
+    - Calibrate flexes (especially finger 2) and choose thresholds
+    - For testing, try playing and saving at the same time (duplicate data might be needed)
+    - Save previous n (=3) values of all sensors in queue
+    - Plot magnitude of gyration and map to desired output)
+    - Plot Acceleration (check how to send it instead of pitch-roll-yaw)
+
+- ISSUES:
+    - Why do gyros not get negative values?
+
+- Animate simulated data. (https://pythonprogramming.net/live-graphs-matplotlib-tutorial/)
+- Calibrate sensors on computer (not Arduino) 
+
+
+### Data Analysis:
+
+### Machine Learning Ideas:
+- READUNDANCY: learn from flex sensors in file 
+- Learning trigger threshold and velocity 
+- Learning transition matrix for next note
+- Use RNN
+- Set up HMM for learning notes fingers.
+- Problem with learning trigger is need for false labels: can I find a law (without learning)? Learn a constant across velcities.
+- Use scales to label thumb-under for note and finger (when finger goes down but note up then its a thumb-under).
+- Add sensor bending and IMU as conditions in a Bayesian Network
+- Learn trigger on/off and velocity
+- make transition matrix with features (previous_finger, present_finger, thumb_under (0, 1))
+
+## Hardware Improvements:
+- Test new resistors
+- Make new board for both gloves
+- Make wireless
+
+

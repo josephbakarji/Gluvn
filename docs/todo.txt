@@ -1,0 +1,45 @@
+
+
+TODO:
+	- Calibrate flex sensors (Arduino)
+	- Analyze plots
+	- Get acceleration from arduino
+
+	* Applications:
+		- Simple melody 	
+		- Bow melody
+		- Vibrato
+		- Chords in arpeggiators
+		- Loops
+
+	- Autocalibrate flexes 
+		- Open hand: press when ready
+		- Press when done
+		- Close hand: press when ready
+		- Press when done
+		- Calibration saved in data/settings/
+		- Get transforms in runs
+
+CODE:
+	- Fix 
+	- PortL and portR, as well as everything in __init__.py should be change to caps (constants)
+	- put class Stats in different file (than data_analysis.py)
+	- Fix data_analysis indentation
+	- Put all plotting capabilities in a Visualize: class
+	- All functions need to be generalized to include 2 hands	
+		- Fix Analyze, readData etc..
+	
+DOCUMENTATION:
+	- Use sphynx
+
+CALIBRATION:
+	Flex Sensors Calibration:
+		396	514	440	418	451
+		658	806	697	676	783
+
+BUY:
+	- Big shrink tube for neck of pressure sensor 
+
+ISSUES:
+- 67K is probably too high (for old glove) - 47K might be ideal - or 10K as recommended.
+- FSR in index finger of left glove doesn't work

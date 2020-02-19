@@ -1,0 +1,42 @@
+Learn: 
+	read_finger_to_note(self)
+	learn_transition_prob_withThumbUnder(self)
+	learn_transition_prob(self)
+	learn_thumbunder(self, n)
+	plot_transition_matrix(self, data)
+
+Stats:
+	get_thumb_flex(self, idxminus=10, idxplus=0)
+	get_press_distribution(self, idxminus=10, idxplus=0)
+	plot_thumbunder_flex(self, time_array0, flex_array0, time_array1, flex_array1)
+	plot_velocity_correlations(self, parray, tarray, velarray)
+	plot_all_pressures(self, parray, tarray)
+	collect_trigger_events(self, idxminus=10, idxplus=3)
+	write_finger_to_note(self, overwrite=True)
+	collect_data(self)
+	get_filelist(self)
+
+ReadWrite:
+	get_filename(self):
+	getFullPath(self):
+	saveData(self, sens_dataq, key_dataq, saveoption='addnew'):
+	saveSensors(self, dataq):
+	saveKeyboard(self, dataq):
+	readData(self):
+	readSensors(self):
+	readKeyboard(self):
+	getSaveLocation(self):
+	naiveFilter(self, pressData):
+
+Analyze:
+	readFullData(self):
+	invertList(self, data):
+	getPressData(self):
+	getKeyTimeData(self):
+	getFlexData(self):
+	getNotes(self, timeKeyboard, notes, velocity):
+	addNotes2Plot(self, ax, TimedNotes, opacity):
+	addSens2Plot(self, ax, sensdata, pick, linestyle='-', color='k', linewidth=1):
+	addSlider2Plot(self, ax, plt):
+	plotKeyAndGlove(self, mode, savename=''):
+	plot_sampling_frequency(self):
