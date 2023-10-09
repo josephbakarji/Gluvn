@@ -21,6 +21,7 @@ union u_quat {
 
 static int ret;
 static short gyro[3];
+static short accel[3];
 static short sensors;
 static unsigned char fifoCount;
 
@@ -127,7 +128,7 @@ static inline float wrap_180(float x) {
 int mympu_update() {
 
 	do {
-		ret = dmp_read_fifo(gyro,NULL,q._l,NULL,&sensors,&fifoCount);
+		ret = dmp_read_fifo(gyro, accel, q._l,NULL,&sensors,&fifoCount);
 		/* will return:
 			0 - if ok
 			1 - no packet available
@@ -146,7 +147,12 @@ int mympu_update() {
 
 
 	quaternionToEuler( &q._f, &mympu.ypr[2], &mympu.ypr[1], &mympu.ypr[0] );
-	
+  mpu_get_accel_reg(accel, NULL);
+
+  mympu.accel[0] = (float)accel[0];
+  mympu.accel[1] = (float)accel[1];
+  mympu.accel[2] = (float)accel[2];
+
 	/* need to adjust signs and do the wraps depending on the MPU mount orientation */ 
 	/* if axis is no centered around 0 but around i.e 90 degree due to mount orientation */
 	/* then do:  mympu.ypr[x] = wrap_180(90.f+rad2deg(mympu.ypr[x])); */
@@ -161,4 +167,3 @@ int mympu_update() {
 
 	return 0;
 }
-

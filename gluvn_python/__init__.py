@@ -1,17 +1,14 @@
 
 
 # Global Variables
-# portL = '/dev/tty.usbmodem1411' # serial port name
-# portR = '/dev/tty.usbmodem1421' # serial port name
-#portL = '/dev/tty.usbmodem14501' # serial port name
-portL = '/dev/cu.usbmodem14601' # serial port name
-portR = '/dev/cu.usbmodem14501' # serial port name
+portL = '/dev/cu.usbmodem101' # serial port name
+portR = '/dev/cu.usbmodem1101' # serial port name
 
 baud = 115200	# baud rate set from Arduino
-IACDriver = 'IAC Driver tologic' # Virtual Midi Driver
+IACDriver = 'IAC Driver todaw' # Virtual Midi Driver
 keyboard_portname = 'Digital Piano'
 
-mainDir= '/Users/josephbakarji/Documents/music/main/gluvn/gluvn_python/'
+mainDir= '/Users/josephbakarji/Documents/my-projects/gluvn/code/gluvn_python/'
 
 figDir = mainDir + 'figures/'
 
