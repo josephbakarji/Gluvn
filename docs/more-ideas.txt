@@ -1,0 +1,4 @@
+acceleromter for volume control (after touch)
+- purpose of glove: interface between coding an instrument and algorithimically composing sequences of notes. One for example can imagine that playing chords can be done more or less accuractly with control over inversions and scales and. The task is mainly of machine learning and music interaction design.
+- Move hand while pressing to control aspects of sound like playing a cello: both pressure and speed of gesture matter
+- use gravity to control sounds. Going up and down in a smooth motion 
