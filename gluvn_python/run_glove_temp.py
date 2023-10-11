@@ -2,8 +2,8 @@ from __future__ import division
 from __init__ import portL, portR, baud, testDir, simDir, EXPDIR, learnDir, keyboard_portname
 from port_read import ReadSerial, ParseSerial, printSens, ReadKeyboard, ParseFile
 from data_analysis import ReadWrite, Analyze, Analyze2Hands
-from senstonote import WeighTrig, TrigBend, WeighTrig2h, CombHandsSendMidi
-from senstonote_2h import TrigBend_R, TrigBend_L, TrigBend_Combine
+from gluvn.gluvn_python.senstonote_temp2 import WeighTrig_ai, WeighTrig
+import gluvn.gluvn_python.senstonote_temp2 as senstonote_temp2
 import time
 import numpy as np
 import random
@@ -132,18 +132,6 @@ class RunGlove:
         key = input('press any key to finish \n')
         print('End of run')
 
-    def triggerIMU(self, notes, pressTrigThresh):
-        sensThread = ReadSerial(portR, baud)
-        parseThread = ParseSerial(sensThread.sensq, self.time0)
-        parseThread.readPressIMU = True
-        PressTrigP = TrigBend(parseThread.pressimuq, pressTrigThresh, notes) 
-
-        sensThread.start()
-        parseThread.start()
-        PressTrigP.start()
-
-        key = input('press any key to finish \n')
-        print('End of run')
 
 
     def aiTrigger(self):
@@ -198,62 +186,14 @@ class RunGlove:
         key = 'C'
         
 
-        pressTrigPR = WeighTrig2h(parseThreadR.pressq, collectq, 'R', pressTrigThresh, dshmidt) 
+        pressTrigPR = senstonote_temp2.WeighTrig2h(parseThreadR.pressq, collectq, 'R', pressTrigThresh, dshmidt) 
         #pressTrigPL = senstonote.WeighTrig2h(sensThreadL.pressq, collectq, 'L', 40, 10)  
-        pressTrigPL = WeighTrig2h(parseThreadL.flexq, collectq, 'L', 100, 20)
+        pressTrigPL = senstonote_temp2.WeighTrig2h(parseThreadL.flexq, collectq, 'L', 100, 20)
 
-        collectSend = CombHandsSendMidi(collectq, basenote, key)
+        collectSend = senstonote_temp2.CombHandsSendMidi(collectq, basenote, key)
 
         pressTrigPR.start()
         pressTrigPL.start()
-        collectSend.start()
-
-        key = input('press any key to finish \n')
-        print('End of run')
-
-
-
-    def twoHandInstrumentVib(self, fromfile=False):
-        # Uses Pressure in both hands for keyboard access with vibrato.
-        
-        if fromfile:
-            parseThreadR = ParseFile(directory=self.directory, filename=self.filename, hand='R')
-            parseThreadL = ParseFile(directory=self.directory, filename=self.filename, hand='L')
-            parseThreadR.readPressIMU = True
-            parseThreadL.readFlex = True
-            parseThreadR.start()
-            parseThreadL.start()
-
-        else:
-            sensThreadR = ReadSerial(portR, baud)
-            sensThreadL = ReadSerial(portL, baud)
-            parseThreadR = ParseSerial(sensThreadR.sensq, self.time0)
-            parseThreadL = ParseSerial(sensThreadL.sensq, self.time0)
-            parseThreadR.readPressIMU = True
-            parseThreadL.readFlex = True
-
-            sensThreadR.start()
-            parseThreadR.start()
-            sensThreadL.start()
-            parseThreadL.start()
-
-        # Fix that part
-        collectq = queue.Queue(maxsize=20)
-        pressTrigThresh = 15 
-        flexTrigThresh = 150 
-        dshmidt = 5
-        dshmidtf = 30 
-        basenote = 'A'
-        scale = 'minor'
-        noterange = None#['C1', 'G4']
-
-        pressTrigR = TrigBend_R(parseThreadR.pressimuq, collectq, pressTrigThresh, dshmidt) 
-        pressTrigL = TrigBend_L(parseThreadL.flexq, collectq, flexTrigThresh, dshmidtf)
-
-        collectSend = TrigBend_Combine(collectq, basenote, scale, noterange)
-
-        pressTrigR.start()
-        pressTrigL.start()
         collectSend.start()
 
         key = input('press any key to finish \n')

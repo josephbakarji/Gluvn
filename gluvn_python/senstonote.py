@@ -6,10 +6,37 @@ Created on May 20, 2016
 
 import numpy as np
 from notemidi import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
+from notemidi import  PitchBend, Aftertouch
 from __init__ import settingsDir
 from learning import Learn
 from threading import Thread
 from collections import deque
+
+
+## COPIED FROM notemidi.py
+import mido
+import csv
+from __init__ import IACDriver
+import os,sys,inspect
+current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+
+rtmidi = mido.Backend('mido.backends.rtmidi')
+output = rtmidi.open_output(IACDriver)
+
+# Note to Midi number dictionary
+note2numdict = {}
+for key, val in csv.reader(open(current_dir+'/data/tables/note2num.csv')):
+    note2numdict[key] = int(val)
+
+
+
+#######################################################################################################################################
+#######################################################################################################################################
+
+
+
+
+
 
 
 
@@ -61,6 +88,101 @@ class WeighTrig(Thread):
                 turn_state = nswitch + turn_state
                 signswitch2note(nswitch, sensvalue, self.notearr)
 
+
+##########################################################################################################
+
+# Use trigger and bend pitchwheel and other
+class TrigBend(Thread):
+    def __init__(self, pimuq, thresh, notearr):
+        Thread.__init__(self)
+        self.pressimuq = pimuq
+        self.thresh = thresh
+        self.notearr = notearr
+        self.daemon = True
+
+    def run(self):
+
+        trigon_prev = False
+        trigoff_prev = False
+        turn_state = np.zeros((5,), dtype=int)
+        dshmidt = 5     # use as input
+        zero_gyrin = 32767.0
+        max_bend = 2000 # Actual range is -8191..8191
+        # pressq_prev = np.zeros((len(turn_state))) 
+        noteplayed = None
+        volprev = 30
+        
+        
+        while True: 
+            sensvalue = self.pressimuq.get(block=True)
+            pressq = np.asarray(sensvalue[-5:])
+            scaled_gyrq = (np.asarray(sensvalue[3:6], dtype=float) - zero_gyrin ) / zero_gyrin * max_bend
+            # print(gyrq[-1])
+
+
+            # trigger 
+            sdiff = pressq - self.thresh        # subtract threshold from readings
+            trigon = sdiff - dshmidt > 0
+            trigoff = sdiff + dshmidt < 0 
+            turnon = ( trigon & np.logical_not( trigon_prev ) ) & np.logical_not(turn_state) # Redundant?
+            turnoff = ( trigoff & np.logical_not( trigoff_prev ) ) & turn_state 
+            nswitch = turnon.astype(int) - turnoff.astype(int) # Turn on if 1, Turn off if -1, No action if 0. - Also works 1*turnon - 1*turnoff
+            trigon_prev = trigon
+            trigoff_prev = trigoff
+
+            if nswitch.any(): # use if(nswitch.any())
+                # extrapolation = ((pressq + 0.5*(pressq - pressq_prev) ) / 255.0 * 127.0 ).astype(int)
+                # Only used for turn_state=1. 
+                # Can get rid of np.max([i, 0])
+                # velocity = np.array([np.max([i, 0]) if i<127 else 127 for i in extrapolation])
+                # print(pressq, pressq_prev, velocity)
+
+                # (nswitch, velocity, self.notearr)
+                # pressq_prev = pressq
+
+                idxtrig = np.where(nswitch==1)[0] #Assuming it returns one value
+                idxuntrig = np.where(nswitch==-1)[0] #Assuming it returns one value
+                on_idx = np.where(turn_state==1)[0]
+                # turn_state = nswitch + turn_state
+
+                if len(idxtrig)!=0:
+                    noteplayed = idxtrig[0]
+                    message = mido.Message('note_on', note=note2numdict[self.notearr[noteplayed]], velocity=30)
+                    output.send(message)
+                    turn_state[noteplayed] = 1
+                    print(turn_state)
+                    if len(on_idx)>0:
+                        message = mido.Message('note_off', note=note2numdict[self.notearr[on_idx[0]]], velocity=0)
+                        output.send(message)
+                        turn_state[on_idx[0]] = 0
+                        print(turn_state)
+                        PitchBend(0)
+                if len(idxuntrig)!=0:
+                    if turn_state[idxuntrig[0]] == 1:
+                        print('UNTRIGGERING')
+                        message = mido.Message('note_off', note=note2numdict[self.notearr[idxuntrig[0]]], velocity=0)
+                        output.send(message)
+                        PitchBend(0)
+                        turn_state[idxuntrig[0]] = 0
+                        noteplayed = None
+                        volprev = 30
+
+            # Bend
+            if noteplayed is not None:
+                PitchBend(int(scaled_gyrq[-1]))
+
+                pressed_idx = np.where(pressq>20)
+                print(pressed_idx)
+                if len(pressed_idx[0])>0:
+                    press_val = np.mean(pressq[pressed_idx])
+                else:
+                    press_val = pressq[noteplayed] 
+
+                volnew = volprev + 0.01 * (press_val*127/255 - volprev)
+                print(volnew)
+                Aftertouch(int(volnew))
+                volprev = volnew
+                ## TODO: assign average between previous and new note
 
 ##############################################################################
 ##############################################################################
@@ -224,67 +346,6 @@ class CombHandsSendMidi(Thread):
 
 
 
-def WindowMap(state, WArr, NArr):
-    for i, win in enumerate(WArr):
-        if (win == state).all():
-            return NArr[i]
-    return NArr[5]
-
-
-def GenerateNoteMap(midnote, scale, mode):
-    if mode == 'standard':
-
-        WArr = [ [1, 1, 1, 1, 1], 
-        [0, 1, 1, 1, 1], 
-        [0, 0, 1, 1, 1], 
-        [0, 0, 0, 1, 1], 
-        [0, 0, 0, 0, 1], 
-        [0, 0, 0, 0, 0],
-        [1, 0, 0, 0, 0],
-        [1, 1, 0, 0, 0],
-        [1, 1, 1, 0, 0],
-        [1, 1, 1, 1, 0] ]
-
-        NArr = [ ['B0', 'C1', 'D1'],
-        ['E1', 'F1', 'G1'],
-        ['A1', 'B1', 'C2'],
-        ['D2', 'E2', 'F2'],
-        ['G2', 'A2', 'B2'],
-        ['C3', 'D3', 'E3'],
-        ['F3', 'G3', 'A3'],
-        ['B3', 'C4', 'D4'],
-        ['E4', 'F4', 'G4'],
-        ['A4', 'B4', 'C5']]
-
-    elif mode == 'test':
-        a1 = [0, 0, 0, 0, 1]
-        a2 = [0, 0, 0, 1, 0]
-        a3 = [0, 1, 0, 0, 0]
-        a4 = [1, 0, 0, 0, 0]
-        a5 = [1, 0, 0, 0, 1]
-        #print(state)
-
-        if((state==a1).all()):
-            notearr = ['C2', 'D2', 'E2', 'F2', 'G2']
-        elif((state==a2).all()):
-            notearr = ['A2', 'B2', 'C3', 'D3', 'E3']
-        elif((state==a3).all()):
-            notearr = ['F3', 'G3', 'A3', 'B3', 'C4']
-        elif((state==a4).all()):
-            notearr = ['D4', 'E4', 'F4', 'G4', 'A4']
-        elif((state==a5).all()):
-            notearr = ['B4', 'C5', 'D5', 'E5', 'F5']
-        else:
-            notearr = ['F1', 'G1', 'A1', 'B1', 'C1']
-        NArr = notearr
-
-    return WArr, NArr
-
-def MakeNotes(midnote, scale):
-    name_to_number(midnote)
-    if scale == 'major':
-        f = 1
-
 #####
 
 
@@ -331,3 +392,59 @@ class playchords(Thread):
                     TriggerChordTest(trigsens, pitch, 'off')
                     
 
+# Use trigger and bend pitchwheel and other
+# class TrigBend(Thread):
+#     def __init__(self, pimuq, thresh, notearr):
+#         Thread.__init__(self)
+#         self.pressimuq = pimuq
+#         self.thresh = thresh
+#         self.notearr = notearr
+#         self.daemon = True
+
+#     def run(self):
+
+#         trigon_prev = False
+#         trigoff_prev = False
+#         turn_state = np.zeros((5,), dtype=int)
+#         dshmidt = 5     # use as input
+#         zero_gyrin = 32767.0
+#         max_bend = 2000 # Actual range is -8191..8191
+#         pressq_prev = np.asarray([0])
+        
+        
+
+#         while True: 
+#             sensvalue = self.pressimuq.get(block=True)
+#             pressq = np.asarray(sensvalue[-5:])
+#             scaled_gyrq = (np.asarray(sensvalue[3:6], dtype=float) - zero_gyrin ) / zero_gyrin * max_bend
+#             # print(gyrq[-1])
+
+
+#             # trigger 
+#             sdiff = pressq - self.thresh        # subtract threshold from readings
+#             trigon = sdiff - dshmidt > 0
+#             trigoff = sdiff + dshmidt < 0 
+#             turnon = ( trigon & np.logical_not( trigon_prev ) ) & np.logical_not(turn_state) # Redundant?
+#             turnoff = ( trigoff & np.logical_not( trigoff_prev ) ) & turn_state 
+#             nswitch = turnon.astype(int) - turnoff.astype(int) # Turn on if 1, Turn off if -1, No action if 0. - Also works 1*turnon - 1*turnoff
+#             trigon_prev = trigon
+#             trigoff_prev = trigoff
+
+#             if nswitch.any(): # use if(nswitch.any())
+#                 # turn_state = nswitch + turn_state
+#                 extrapolation = ((pressq + 0.5*(pressq - pressq_prev) ) / 255.0 * 127.0 ).astype(int)
+#                 # Only used for turn_state=1. 
+#                 # Can get rid of np.max([i, 0])
+#                 velocity = np.array([np.max([i, 0]) if i<127 else 127 for i in extrapolation])
+#                 # print(pressq, pressq_prev, velocity)
+
+#                 turn_state, switch_single(nswitch, velocity, self.notearr)
+#                 pressq_prev = pressq
+
+#                 #pitch bend those tuning off two zeros
+#                 pitchbend_trignotes(turnoff.astype(int), 0)
+
+#             # Bend
+#             if turn_state.any():
+#                 pitchbend_trignotes(int(scaled_gyrq[-1]))
+#                 aftertouch_trignotes(aftertouch_val)

@@ -31,7 +31,7 @@ def make_C2midi():
     return C2midi, midi2C
 
 # Takes an analog sensor vector stream as input and sends midi on or off according to threshold
-def signswitch2note(switch, sensarr, notearr):
+def signswitch2note(switch, notearr):
     for i in range(len(switch)):
         if(switch[i] == 1):
             message = mido.Message('note_on', note=note2numdict[notearr[i]], velocity=80)#sens2vol(sensarr[i], 'linear'))

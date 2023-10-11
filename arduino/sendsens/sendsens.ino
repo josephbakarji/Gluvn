@@ -12,7 +12,7 @@
 
 int ret;
 
-char* hand = "L";
+char* hand = "r"; // Choose either 'r' or 'l'
 int use_gyro = false;
 bool write_serial = true; 
 bool calibration_mode = false; // only works if write_serial
@@ -51,12 +51,12 @@ void setup() {
         Serial.begin(115200);
         // pinMode(LED_PIN, OUTPUT);
 
-        if(hand == "R"){
+        if(hand == "r"){
           MIN_FLEX = R_MIN_FLEX;
           MAX_FLEX = R_MAX_FLEX;
           MIN_PRESS = R_MIN_PRESS;
           MAX_PRESS = R_MAX_PRESS;
-        } else if(hand == "L") {
+        } else if(hand == "l") {
           MIN_FLEX = L_MIN_FLEX;
           MAX_FLEX = L_MAX_FLEX;
           MIN_PRESS = L_MIN_PRESS;
@@ -114,7 +114,7 @@ void loop() {
 
       if(write_serial) {
 
-        Serial.write("w");
+        Serial.write(hand);
 
       // Write to serial
         Serial.write((uint8_t)(yaw_cal >> 8)); Serial.write((uint8_t)(yaw_cal & 255));

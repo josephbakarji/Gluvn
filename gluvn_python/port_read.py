@@ -40,18 +40,22 @@ class ReadSerial(Thread):
         return self.sensq.get(block=True)
 
 class ParseSerial(Thread):
-    def __init__(self, sensq, time0):
+    def __init__(self, sensq, time0, format='>sHHHHHHBBBBBBBBBB', length_checksum=23):
         Thread.__init__(self)
         self.daemon = True
         self.sensq = sensq
         self.time0 = time0
+        self.format = format
+        self.length_checksum = length_checksum
         self.flexq = queue.Queue(maxsize=20)
         self.pressq = queue.Queue(maxsize=48)
         self.imuq = queue.Queue(maxsize=14)
+        self.pressimuq = queue.Queue(maxsize=30)
         self.dataq = queue.Queue(maxsize=0)
         self.readFlex = False
         self.readPress = False
         self.readIMU = False
+        self.readPressIMU = False
         self.readFullData = False
 
     def run(self):
@@ -62,14 +66,16 @@ class ParseSerial(Thread):
     def parse(self):
         qread = self.sensq.get(block=True)
         s = qread.split(b'\n')[0]
-        if s[:1] == b'w' and len(s) == 23:
-            unp = unpack('>sHHHHHHBBBBBBBBBB', s)
+        if (s[:1] == b'r' or s[:1] == b'l') and len(s) == self.length_checksum:
+            unp = unpack(self.format, s)
             if self.readFlex:
                 self.flexq.put(unp[7:12])
             if self.readPress:
                 self.pressq.put(unp[12:17])
             if self.readIMU:
                 self.imuq.put(unp[1:7])
+            if self.readPressIMU:
+                self.pressimuq.put(unp[1:7]+unp[12:17])   
             if self.readFullData:
                 self.dataq.put( (time.time() - self.time0,) + unp )
 
