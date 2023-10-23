@@ -16,14 +16,104 @@ import mido
 from collections import deque
 import csv, sys, os
 
+## TODO:
+# - Fix ParseFile
+# - can either print or save because serial queue data is only read once
+
+class Reader:
+    def __init__(self, 
+                 directory=EXPDIR, 
+                 save_file='test000',
+                 parse_file=None,
+                 sensor_config={'r': {'flex': True, 'press': True, 'imu': True}},
+                 save=False):
+
+        self.directory = directory
+        self.baud = baud # Add to inputs or remove from here
+        self.hands = list(sensor_config.keys()) 
+        self.sensor_config = sensor_config
+        self.save = save
+        self.save_file = save_file
+        self.parse_qsize = 0 if self.save else 30
+        self.parse_file = None if parse_file is None else os.path.join(directory, parse_file)
+        self.threads = self.make_reader_threads()
+        self.printers = self.make_printer_threads()
+    
+    def make_reader_threads(self):
+        time0 = time.time() # Common starting time to sync multiple threads
+        threads = {hand:{} for hand in self.hands}
+        for hand in self.hands:
+            if self.parse_file is None:
+                threads[hand]['port'] = portR if hand == 'r' else portL
+                threads[hand]['serial'] = ReadSerial(threads[hand]['port'], self.baud)
+                threads[hand]['parser'] = ParseSerial(threads[hand]['serial'].getQ(), time0, 
+                                                      **self.sensor_config[hand], qsize=self.parse_qsize)
+            else:
+                threads[hand]['parser'] = ParseFile(self.directory, self.parse_file, hand)
+        return threads
+    
+    def start_readers(self):
+        for hand in self.hands:
+            if self.parse_file is None:
+                self.threads[hand]['serial'].start()
+            self.threads[hand]['parser'].start()
+
+    def stop_readers(self):
+        for hand in self.hands:
+            if self.parse_file is None:
+                self.threads[hand]['serial'].join(timeout=1)
+            self.threads[hand]['parser'].join(timeout=1)
+
+    def make_printer_threads(self):
+        printers = {}
+        for hand in self.hands:
+            printers[hand] = printSens(self.threads[hand]['parser'].getQ())
+        return printers
+
+    def start_printers(self):
+        # Check if reading threads are already running
+        for hand in self.hands:
+            self.printers[hand].start()
+
+    def stop_printers(self):
+        for hand in self.hands:
+            self.printers[hand].join(timeout=1)    
+    
+    def runAndPrintSensors(self):
+        self.start_readers()
+        self.start_printers()
+        key = input('press any key to finish \n')
+        print('Shutting down...') 
+
+        # Fix save option to account for data structure, and put all data in one file.
+        if self.save:
+            self.save_sensors()
+            print('data saved')
+        
+        self.stop_printers()
+        self.stop_readers()
+
+    # Careful: not to be confused with startReaders()
+    def run_sensors(self):
+        self.start_readers()
+        key = input('press any key to finish \n')
+        print('Shutting down...')
+        self.stop_readers()
+
+    def save_sensors(self):
+        datawriter = ReadWrite(self.directory, self.save_file)
+        datawriter.makeDir(saveoption='addnew')
+        for hand in self.hands:
+            datawriter.saveSensorsFromDict(self.threads[hand]['parser'].getQ(), hand=hand)
+
 
 class ReadSerial(Thread):
-    def __init__(self, port, baud):
+    def __init__(self, port, baud, qsize=48):
         Thread.__init__(self)
         self.daemon = True
         self.port = port
         self.baud = baud
-        self.sensq = queue.Queue(maxsize=48)
+        self.sensq = queue.Queue(maxsize=qsize)
         self.serial_port = serial.Serial(self.port, self.baud, timeout=None)
 
     def run(self):
@@ -36,49 +126,55 @@ class ReadSerial(Thread):
         self.sensq.put(temp)
         temp = 0
 
-    def getSensorQ(self):
+    def getQ(self):
+        return self.sensq
+
+    def getQBlock(self):
         return self.sensq.get(block=True)
 
+
 class ParseSerial(Thread):
-    def __init__(self, sensq, time0, format='>sHHHHHHBBBBBBBBBB', length_checksum=23):
+    def __init__(self, sensq, time0, format='>sHHHHHHBBBBBBBBBB', 
+                 length_checksum=23, add_timestamp=False, 
+                 flex=False, press=True, imu=False, qsize=30):
         Thread.__init__(self)
         self.daemon = True
         self.sensq = sensq
         self.time0 = time0
         self.format = format
         self.length_checksum = length_checksum
-        self.flexq = queue.Queue(maxsize=20)
-        self.pressq = queue.Queue(maxsize=48)
-        self.imuq = queue.Queue(maxsize=14)
-        self.pressimuq = queue.Queue(maxsize=30)
-        self.dataq = queue.Queue(maxsize=0)
-        self.readFlex = False
-        self.readPress = False
-        self.readIMU = False
-        self.readPressIMU = False
-        self.readFullData = False
-
+        self.dataq = queue.Queue(maxsize=qsize)
+        self.read_configs = {'flex': flex, 'press': press, 'imu': imu}
+        self.add_timestamp = add_timestamp
+        
+        # Defining slices for various data types
+        self.slices = {
+            'flex': slice(7, 12),
+            'press': slice(12, 17),
+            'imu': slice(1, 7),
+        }
+        
     def run(self):
         print('parsing starting ... ')
         while True:
             self.parse()
-
+            
     def parse(self):
         qread = self.sensq.get(block=True)
         s = qread.split(b'\n')[0]
-        if (s[:1] == b'r' or s[:1] == b'l') and len(s) == self.length_checksum:
+        if (s[:1] in (b'r', b'l')) and len(s) == self.length_checksum:
             unp = unpack(self.format, s)
-            if self.readFlex:
-                self.flexq.put(unp[7:12])
-            if self.readPress:
-                self.pressq.put(unp[12:17])
-            if self.readIMU:
-                self.imuq.put(unp[1:7])
-            if self.readPressIMU:
-                self.pressimuq.put(unp[1:7]+unp[12:17])   
-            if self.readFullData:
-                self.dataq.put( (time.time() - self.time0,) + unp )
-
+            data_to_put = {}
+            
+            for key, active in self.read_configs.items():
+                if active:
+                    data_to_put[key] = unp[self.slices[key]]
+                    
+            if self.add_timestamp: # to avoid putting empty data into the queue
+                data_to_put['time'] = time.time() - self.time0
+            
+            self.dataq.put(data_to_put)
+                
     def getQ(self):
         return self.dataq
 
@@ -110,10 +206,54 @@ class printSens(Thread):
         self.daemon = True
 
     def run(self):
-        print('time, yaw, pitch, roll, gx, gy, gz, f1, f2, f3, f4, f5, p1, p2, p3, p4, p5 \n')
         while True: 
             sensvalue = self.sensorq.get(block=True) # No need to get, try only printing last element
             print(self.info, sensvalue)
+
+
+
+# class ParseFile(Thread):
+#     def __init__(self, directory, filename, flex=False, press=True, imu=False, qsize=30):
+#         Thread.__init__(self)
+#         self.directory = directory
+#         self.filename = filename
+#         self.daemon = True
+#         self.dataq = queue.Queue(maxsize=qsize)
+#         self.read_configs = {'flex': flex, 'press': press, 'imu': imu}
+        
+#         # Defining slices for various data types
+#         self.slices = {
+#             'flex': slice(7, 12),
+#             'press': slice(12, 17),
+#             'imu': slice(1, 7),
+#         }
+        
+#     def run(self):
+#         print('file parsing starting ... ')
+#         while True:
+#             self.parse()
+            
+#     def parse(self):
+#         reader = ReadWrite(directory=self.directory, filename=self.filename)
+#         # timeSens, pressData, flexData, imuData = reader.readSensors(hand=self.hand)
+#         qread = self.sensq.get(block=True)
+#         s = qread.split(b'\n')[0]
+#         if (s[:1] in (b'r', b'l')) and len(s) == self.length_checksum:
+#             unp = unpack(self.format, s)
+#             data_to_put = {}
+            
+#             for key, active in self.read_configs.items():
+#                 if active:
+#                     data_to_put[key] = unp[self.slices[key]]
+                    
+#             if self.add_timestamp: # to avoid putting empty data into the queue
+#                 data_to_put['time'] = time.time() - self.time0
+            
+#             self.dataq.put(data_to_put)
+                
+#     def getQ(self):
+#         return self.dataq
+
 
 
 class ParseFile(Thread):
@@ -153,8 +293,18 @@ class ParseFile(Thread):
                 self.dataq.put( (time.time() - self.time0,) + imuData + flexData + pressData )
 
         print('done')
-        sys.exit() #doenest work...
 
     def getQ(self):
         return self.dataq
 
+
+if __name__ == "__main__":
+    save = True 
+    sensor_config = {'l': {'flex': True, 'press': True, 'imu': True},
+                     'r': {'flex': False, 'press': True, 'imu': True}}
+    reader = Reader(sensor_config=sensor_config, 
+                    save=save,
+                    save_file='test00')
+    
+    reader.runSensors()
+    reader.saveSensors()

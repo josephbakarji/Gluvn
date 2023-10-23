@@ -5,12 +5,14 @@ Created on May 20, 2016
 '''
 
 import numpy as np
-from notemidi import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
+# from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
 from __init__ import settingsDir
 from learning import Learn
 from threading import Thread
 from collections import deque
 from mapper import NoteMapper
+from port_read import Reader
+from midi_writer import MidiWriter
 import queue
 
 # Constants
@@ -22,258 +24,181 @@ HIGH_JUMP_THRESHOLD = 100
 #######################################################################################################################################
 #######################################################################################################################################
 
-# NOT TESTED
-class Trigger(Thread):
-    def __init__(self, hand, sensorq, collectq, thresh=180, dshmidt=5):
-        Thread.__init__(self)
-        self.hand = hand
-        self.sensorq = sensorq
-        self.collectq = collectq
-        self.thresh = thresh
-        self.dshmidt = dshmidt
-        self.trigon_prev = False
-        self.trigoff_prev = False
-        self.turn_state = np.zeros(5, dtype=bool)
 
-    def shmidt_trig(self, sensvalue):
-        " Basic trigger function that takes sensor readings and returns trigger on/off and turn on/off "
-        sensarr = np.asarray(sensvalue) # Transforming to numpy array everytime might be inefficient
+class SensorToTrigger(Thread):
+    def __init__(self, hand, sensor_q, collect_q, 
+                 processing='trigger', sensor='press', thresh=180, hysteresis=5):
+        super().__init__()
+        self.hand = hand
+        self.sensor_q = sensor_q
+        self.sensor = sensor # a list if doing continuous reading
+        self.collect_q = collect_q
+        self.process_input = self.choose_processor(processing) 
+        self.thresh = thresh
+        self.hysteresis = hysteresis
+        self.turn_state = np.zeros(5, dtype=bool)
+        self.trig_on = np.zeros(5, dtype=bool)
+        self.trig_off = np.zeros(5, dtype=bool)
+
+    def choose_processor(self, processing):
+        if processing == 'trigger':
+            return self.simple_switching
+        elif processing == 'continuous':
+            return self.continuous_input
+
+    def trigger_logic(self, sensor_values):
+        trigon_prev = self.trig_on
+        trigoff_prev = self.trig_off
+        sensarr = np.asarray(sensor_values) # Transforming to numpy array everytime might be inefficient
         sdiff = sensarr - self.thresh        # subtract threshold from readings
-        trigon = sdiff - self.dshmidt > 0
-        trigoff = sdiff + self.dshmidt < 0 
-        turnon = ( trigon & np.logical_not( self.trigon_prev ) ) & np.logical_not(self.turn_state)
-        turnoff = ( trigoff & np.logical_not( self.trigoff_prev ) ) & self.turn_state 
-        nswitch = turnon.astype(int) - turnoff.astype(int) # Turn on if 1, Turn off if -1, No action if 0. - Also works 1*turnon - 1*turnoff
-        self.trigon_prev = trigon
-        self.trigoff_prev = trigoff
-        return nswitch
+        trigon = sdiff - self.hysteresis > 0
+        trigoff = sdiff + self.hysteresis < 0 
+        turnon = np.logical_and(np.logical_and( trigon , np.logical_not( trigon_prev ) ) , np.logical_not(self.turn_state))
+        turnoff = np.logical_and(np.logical_and( trigoff , np.logical_not( trigoff_prev ) ) , self.turn_state )
+        n_switch = turnon.astype(int) - turnoff.astype(int) # Turn on if 1, Turn off if -1, No action if 0. - Also works 1*turnon - 1*turnoff
+        self.turn_state = n_switch + self.turn_state
+        self.trig_on, self.trig_off = trigon, trigoff
+
+        return n_switch
+
+
+    def simple_switching(self):
+        sensor_values = self.sensor_q.get(block=True)[self.sensor]
+        n_switch = self.trigger_logic(sensor_values)
+        # pre-process gyro/accel data
+        if np.any(n_switch): 
+            state = [n_switch, self.hand]
+            self.collect_q.put(state)
+
+
+    # def continuous_input(self):
+    #     sensor_dict = self.sensor_q.get(block=True)
+    #     n_switch = self.trigger_logic(sensor_dict['press'])
+    #     reading_collect = [self.hand]
+    #     for sensor in self.sensor:
+    #         reading_collect.append(sensor_dict[sensor])
+
+    #     switch = False
+    #     if np.any(n_switch):
+    #         switch = True
+
+    #         # Get index of triggered, untriggered, and turned on sensors
+    #         idx_triggered = np.where(n_switch==1)[0] #Assuming it returns one value
+    #         idx_untriggered = np.where(n_switch==-1)[0] #Assuming it returns one value
+    #         idx_turned_on = np.where(self.turn_state==1)[0]
+    #         reading_collect += [idx_triggered, idx_untriggered, idx_turned_on]
+
+    #         # If new sensor is triggered, turn it on, and turn off any turned on sensors
+    #         if len(idx_triggered) > 0:
+    #             self.turn_state[idx_triggered[0]] = 1
+    #             if len(idx_turned_on) > 0:
+    #                 self.turn_state[idx_turned_on[0]] = 0
+            
+    #         # If new sensor is untriggered and turned on, turn it off 
+    #         if len(idx_untriggered) > 0 and self.turn_state[idx_untriggered[0]] == 1:
+    #             self.turn_state[idx_untriggered[0]] = 0
+
+    #     reading_collect += [switch]
+    #     self.collect_q.put(reading_collect)
+
 
     def run(self):
         while True:
-            sensvalue = self.sensorq.get(block=True)
-            nswitch = self.shmidt_trig(sensvalue)
+            sensor_values = self.sensor_q.get(block=True)[self.sensor]
+            n_switch = self.trigger_logic(sensor_values)
+            # pre-process gyro/accel data
+            if np.any(n_switch): 
+                state = [n_switch, self.hand]
+                self.collect_q.put(state)
 
-            if nswitch.any(): 
-                self.turn_state = nswitch + self.turn_state 
-                state = [nswitch, self.hand]
-                self.collectq.put(state)
-            
-
-#######################################################################################################################################
-#######################################################################################################################################
-# def trigger_usepast(sensorq, trigon_prev, trigoff_prev, turn_state):
-
-##### NOT TESTED 
-class SimpleTrigger(Thread):
-    def __init__(self, sensorqR=None, sensorqL=None, thresh=180, dshmidt=5):
-        Thread.__init__(self)
-        self.collectq = queue.Queue(maxsize=20)
-
-        # Determine whether both are included or not
-        self.Trigger_R = Trigger('R', sensorqR, self.collectq, thresh, dshmidt)
-        self.Trigger_L = Trigger('L', sensorqL, self.collectq, thresh, dshmidt)
-
-        # Add more mapping options
-        self.mapper = NoteMapper(scale='major')
+class BaseApp(Thread):
+    def __init__(self, root_note='D', scale='minor',
+                 sensor_config=None, thresholds=None, sensor_to_use=None, hysteresis=5):
+        super().__init__()
         self.daemon = True
+        self.hysteresis = hysteresis
+        self.thresholds = thresholds or {'flex': 150, 'press': 15}
+        self.sensor_config = sensor_config or {'r': {'flex': True, 'press': True, 'imu': True}}
+        self.sensor_to_use = sensor_to_use or {'l': 'flex', 'r': 'press'}
+        self.collect_q = queue.Queue(maxsize=20)
+        self.hands = list(self.sensor_config.keys())
+        self.reader = Reader(sensor_config=self.sensor_config)
+        self.mapper = NoteMapper(root_note=root_note, scale=scale)
+        self.midi_writer = MidiWriter()
+
+    def initialize_triggers(self):
+        triggers = {}
+        for hand in self.hands:
+            triggers[hand] = SensorToTrigger(
+                hand, self.reader.threads[hand]['parser'].getQ(), self.collect_q, 
+                sensor=self.sensor_to_use[hand], thresh=self.thresholds[self.sensor_to_use[hand]], 
+                hysteresis=self.hysteresis
+            )
+            triggers[hand].start()
+        self.triggers = triggers
 
     def run(self):
-        self.Trigger_R.start()
-        self.Trigger_L.start()
-        notearrL = self.mapper.basicMap(first_note='C3')
-        notearrR = self.mapper.basicMap(first_note='A3')
+        self.reader.start_readers()
+        notemaps = self.mapper.basic_map_2hands()  # Assumes a method that maps notes for both hands
+        self.initialize_triggers()
 
         while True: 
-            nswitch, hand = self.collectq.get(block=True)
-            if hand == 'R':
-                signswitch2note(nswitch, notearrR)
+            n_switch, hand = self.collect_q.get(block=True)
+            self.midi_writer.trig_note_array(n_switch, notemaps[hand])
+
+
+class MovingWindowInstrument(BaseApp):
+    def __init__(self, *args, sensor_to_use=None, **kwargs):
+        super().__init__(*args, sensor_to_use=sensor_to_use, **kwargs)
+        self.window_trigger, self.note_windows = self.mapper.moving_window()
+    
+    def run(self):
+        self.reader.start_readers()
+        self.initialize_triggers()
+        playing_notes = [None]*5
+        note_array, note_array_idx = self.mapper.window_map([0, 0, 0, 0, 0], self.window_trigger, self.note_windows)
+        
+        while True:
+            n_switch, hand = self.collect_q.get(block=True)
+            if hand == 'l':
+                temp = self.mapper.window_map(self.triggers['l'].turn_state, self.window_trigger, self.note_windows)
+                if temp is not None:
+                    note_array, note_array_idx = temp
             else:
-                signswitch2note(nswitch, notearrL)
+                playing_notes = self.midi_writer.trig_notes_array_playing(n_switch, playing_notes, note_array)
 
 
 ##############################################################################
 ##############################################################################
 
-######### NOT DONE
-# Collect and combine glove readings
-class FlexPressInstrument(SimpleTrigger, Thread):
-    def __init__(self, basenote='C', scale='minor'):
-        Thread.__init__(self)
-        FlexPressInstrument.__init__(self, sensorqR=None, sensorqL=None, thresh=180, dshmidt=5)
-        self.basenote = basenote
-        self.scale = scale
-        self.daemon = True
+if __name__=="__main__":
 
-    def run(self):
-        
-        fnum = 3
-        #sensarr = np.array([0, 0, 0, 0, 0]) # Arbitrary just for test
-        NotesOn = ['' for i in range(fnum)]
-        [WArr, NArr] = GenerateNoteMap(midnote, scale, mode)
-        notearr = WindowMap(np.zeros(5), WArr, NArr)
+    # sensor_config={'r': {'flex': False, 'press': True, 'imu': False},
+    #                'l': {'flex': True, 'press': False, 'imu': False}}
+    # app = BaseApp(sensor_config=sensor_config)
+    # app.start()
 
-        while True:
-            state = self.collectq.get(block=True)
-            ### state = [turn_state, nswitch, self.hand]
+    # key = input('press any key to finish \n')
+    # print('Shutting down...')
 
-            #[TrigNote(notearr[i], vel) for i in range(state[2]) if ]
-            ## Normal 5 note usage
-            # if(state[2] == 'R'): 
-            #     for i in range(fnum):
-            #         if(state[1][i] == 1):
-            #             TrigNote(notearr[i], 80) # Add function to calculate velocity
-            #             NotesOn[i] = notearr[i]
-            #         elif(state[1][i] == -1):
-            #             TrigNote(NotesOn[i], 0)
+    # app.reader.stop_readers()
+    # for hand in app.hands:
+    #     app.triggers[hand].join(timeout=.1)
+    # app.join(timeout=.1)  
 
-            # 3 press usage
-            if(state[2] == 'R'): 
-                for i, j in enumerate(range(1, 4)):
-                    if(state[1][j] == 1):
-                        print(i, j)
-                        TrigNote(notearr[i], 80) # Add function to calculate velocity
-                        NotesOn[i] = notearr[i]
-                        print(notearr)
-                        #print('note on: ', NotesOn)
-                    elif(state[1][j] == -1):
-                        TrigNote(NotesOn[i], 0)
-                        #print('note off: ', NotesOn)
+    root_note = 'D'
+    scale = 'major'
+    sensor_config={'r': {'flex': True, 'press': False, 'imu': False},
+                   'l': {'flex': True, 'press': False, 'imu': False}}
+    sensor_to_use = {'l': 'flex', 'r': 'flex'}
+    app = MovingWindowInstrument(sensor_config=sensor_config, sensor_to_use=sensor_to_use, 
+                                 root_note=root_note, scale=scale)
+    app.start()
 
-            else: 
-                notearr = WindowMap(state[0], WArr, NArr)
-                print(state[0])
+    key = input('press any key to finish \n')
+    print('Shutting down...')
 
-
-
-
-## Trigger class for one sensor ##
-
-# # Thread that takes sensor queue as input and sends individual midi triggers as output
-# class WeighTrig(Thread):
-#     def __init__(self, sensorq, thresh, notearr):
-#         Thread.__init__(self)
-#         self.sensorq = sensorq
-#         self.thresh = thresh
-#         self.notearr = notearr
-#         self.daemon = True
-
-#     def run(self):
-
-#         trigon_prev = False
-#         trigoff_prev = False
-#         turn_state = np.zeros(5, dtype=bool)
-#         dshmidt = 5     # use as input
-
-#         while True: 
-#             sensvalue = self.sensorq.get(block=True)
-#             [trigon_prev, trigoff_prev, nswitch] = triggerfun(sensvalue, self.thresh, dshmidt, trigon_prev, trigoff_prev, turn_state)
-            
-#             if( not(all(i == 0 for i in nswitch)) ): # use if(nswitch.any())
-#                 turn_state = nswitch + turn_state
-#                 signswitch2note(nswitch, sensvalue, self.notearr)
-
-##############################################################################
-##############################################################################
-## 2 Hand triggering combined ##
-
-
-
-# Collect and combine glove readings
-class CombHandsSendMidi(Thread):
-    def __init__(self, collectq, basenote, key):
-        Thread.__init__(self)
-        self.collectq = collectq
-        self.basenote = basenote
-        self.key = key
-        self.daemon = True
-
-    def run(self):
-        
-        midnote = 'C3'
-        mode = 'standard'
-        scale = 'major'
-
-        fnum = 3
-        #sensarr = np.array([0, 0, 0, 0, 0]) # Arbitrary just for test
-        NotesOn = ['' for i in range(fnum)]
-        [WArr, NArr] = GenerateNoteMap(midnote, scale, mode)
-        notearr = WindowMap(np.zeros(5), WArr, NArr)
-
-        while True:
-            state = self.collectq.get(block=True)
-            ### state = [turn_state, nswitch, self.hand]
-
-            #[TrigNote(notearr[i], vel) for i in range(state[2]) if ]
-            ## Normal 5 note usage
-            # if(state[2] == 'R'): 
-            #     for i in range(fnum):
-            #         if(state[1][i] == 1):
-            #             TrigNote(notearr[i], 80) # Add function to calculate velocity
-            #             NotesOn[i] = notearr[i]
-            #         elif(state[1][i] == -1):
-            #             TrigNote(NotesOn[i], 0)
-
-            # 3 press usage
-            if(state[2] == 'R'): 
-                for i, j in enumerate(range(1, 4)):
-                    if(state[1][j] == 1):
-                        print(i, j)
-                        TrigNote(notearr[i], 80) # Add function to calculate velocity
-                        NotesOn[i] = notearr[i]
-                        print(notearr)
-                        #print('note on: ', NotesOn)
-                    elif(state[1][j] == -1):
-                        TrigNote(NotesOn[i], 0)
-                        #print('note off: ', NotesOn)
-
-            else: 
-                notearr = WindowMap(state[0], WArr, NArr)
-                print(state[0])
-
-
-
-
-
-################################################################################
-################################################################################
-# Play chords with flex (fix)
-
-# Class plays chords by changing pitch and triggering either pressure sensors or flex sensors
-class playchords(Thread):
-    def __init__(self, sensorqueue, sensthresh, imuq, phist, pthresh):
-        Thread.__init__(self)
-        self.sensorq = sensorqueue
-        self.sensthresh = sensthresh
-        self.imq = imuq
-        self.phist = phist   # 127 == 0 degrees
-        self.pthresh = pthresh
-        self.daemon = True
-        
-
-    def run(self):
-
-        trigsens = [0, 0, 0, 0, 0]
-        trigonprev = True
-        trigoffprev = True        
-        while True:
-            if(len(self.imq) != 0): # REMOVE WHEN WIRE SOLDERED
-                pitch = self.imq[-1][1]
-                trigon = (pitch - self.pthresh) <  - self.phist # check if state in region with off or on trigger
-                trigoff = (pitch - self.pthresh) > self.phist
-                turnon =  int(trigon) > int(trigonprev) # goes from 0 to 1 (works without astype too)
-                turnoff = int(trigoff) > int(trigoffprev) # 0 to 1
-                
-                trigonprev = trigon
-                trigoffprev = trigoff
-                #print(pitch)
-                #print(self.sensorq[-1])
-                if(turnon):
-                    print(self.sensorq[-1])
-                    sensarr = np.asarray(self.sensorq[-1])
-                    trigsens = (sensarr - self.sensthresh) > 0
-                    TriggerChordTest(trigsens, pitch, 'on')
-                
-                if(turnoff):
-                    TriggerChordTest(trigsens, pitch, 'off')
-                    
-
+    app.reader.stop_readers()
+    for hand in app.hands:
+        app.triggers[hand].join(timeout=.1)
+    app.join(timeout=.1)  

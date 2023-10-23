@@ -5,8 +5,8 @@ Created on May 20, 2016
 '''
 
 import numpy as np
-from notemidi import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
-from notemidi import  PitchBend, Aftertouch
+from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
+from code.gluvn_python.midi_writer import  PitchBend, Aftertouch
 from __init__ import settingsDir
 from learning import Learn
 from threading import Thread
@@ -317,17 +317,7 @@ class CombHandsSendMidi(Thread):
             state = self.collectq.get(block=True)
             ### state = [turn_state, nswitch, self.hand]
 
-            #[TrigNote(notearr[i], vel) for i in range(state[2]) if ]
-            ## Normal 5 note usage
-            # if(state[2] == 'R'): 
-            #     for i in range(fnum):
-            #         if(state[1][i] == 1):
-            #             TrigNote(notearr[i], 80) # Add function to calculate velocity
-            #             NotesOn[i] = notearr[i]
-            #         elif(state[1][i] == -1):
-            #             TrigNote(NotesOn[i], 0)
-
-            # 3 press usage
+            # Use trigNoteArray? 
             if(state[2] == 'R'): 
                 for i, j in enumerate(range(1, 4)):
                     if(state[1][j] == 1):

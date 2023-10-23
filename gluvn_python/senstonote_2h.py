@@ -1,6 +1,6 @@
 import numpy as np
-from notemidi import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
-from notemidi import PitchBend, Aftertouch
+from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
+from code.gluvn_python.midi_writer import PitchBend, Aftertouch
 from __init__ import settingsDir
 from learning import Learn
 from threading import Thread
@@ -150,57 +150,75 @@ class TrigBend_Combine(Thread):
 
         while True:
             thread_info = self.collectq.get(block=True)
-
+            
+            # If right hand reading
             if(thread_info[0] == 'R'): 
                 switch = thread_info[-1]
+
+                # If a note is being switched, turn notes on and off accordingly 
                 if switch: # Switching notes
                     idxtrig, idxuntrig, on_idx, turn_state = thread_info[3:7]
 
-                    if len(idxuntrig)!=0:
-                        if turn_state[idxuntrig[0]] == 1:
-#                             message = mido.Message('note_off', note=note2numdict[noteplayed], velocity=0)
-                            message = mido.Message('note_off', note=noteplayed, velocity=0)
-                            output.send(message)
-                            PitchBend(0)
-                            if len(idxtrig)==0:
-                                noteplayed = None
-                                idxplayed = None
-                            volprev = 30
+                    # if note was untriggered, turn it off, and reset noteplayed to None
+                    if len(idxuntrig)!=0 and turn_state[idxuntrig[0]] == 1:
+                        message = mido.Message('note_off', note=noteplayed, velocity=0)
+                        output.send(message)
+                        PitchBend(0)
+                        if len(idxtrig)==0:
+                            noteplayed = None
+                            idxplayed = None
+                        volprev = 30
+                        
+                    # if note was triggered, turn it on
                     if len(idxtrig)!=0:
+
+                        # First, turn off the note that was previously played
                         if len(on_idx)>0:
-#                             message = mido.Message('note_off', note=note2numdict[noteplayed], velocity=0)
                             message = mido.Message('note_off', note=noteplayed, velocity=0)
                             output.send(message)
                             PitchBend(0)
             
-                        
                         print(idxplayed)
+
+                        # if the triggered note is the last (pinkie), set note played to that in the next window
                         if idxtrig[0] == 3:
                             if idxplayed is None:
                                 idxplayed = 0
                             noteplayed = NArr[notearr_idx+1][idxplayed]
+
+                        # otherwise, the note played is set from the current window according indxtrig
                         else:
                             idxplayed = idxtrig[0]
                             noteplayed = notearr[idxplayed]
                             print(notearr)
+
+                        # send note
                         print(noteplayed)
-#                         message = mido.Message('note_on', note=note2numdict[noteplayed], velocity=30)
                         message = mido.Message('note_on', note=noteplayed, velocity=30)
                         output.send(message)
 
 
+                # If there is a note that is being played, send pitch bend and aftertouch
                 if idxplayed is not None:
                     pressq, scaled_gyrq = thread_info[1:3]
-
                     PitchBend(int(scaled_gyrq[-1]))
+
+                    # check if any of the fingers are pressed (using 20 threshold)
                     pressed_idx = np.where(pressq>20)
-                    if len(pressed_idx[0])>0:
+
+                    # if any finger is pressed, use the average of the pressed fingers to set volume
+                    if len(pressed_idx[0]) > 0:
                         press_val = np.mean(pressq[pressed_idx])
+
+                    # otherwise, use current value of the finger that is being played
                     else:
                         press_val = pressq[idxplayed] 
+
+                    # set the velocity to a new value using a smoothing factor
                     volnew = volprev + smooth_factor * (press_val*127/255 - volprev)
 
                     Aftertouch(int(volnew))
+
                     volprev = volnew
 
             else: 

@@ -3,6 +3,7 @@ from matplotlib.widgets import Slider
 import itertools
 import csv, sys, os
 from __init__ import learnDir, figDir, EXPDIR
+from utils import merge_queues
 import numpy as np
 import copy
 import pdb
@@ -35,6 +36,7 @@ class ReadWrite:
                 i += 1
                 fm = self.filename + '_' + str(i)
             self.filename = fm
+
             self.direct = self.getFullPath()
             print('Creating Directory: '+ self.direct)
             os.mkdir(self.direct)
@@ -54,14 +56,15 @@ class ReadWrite:
                 print('Writing to '+ self.direct)
                 os.mkdir(self.direct)
 
-        elif(saveoption == 'overwrite'):
-            print("Overwriting or appending " + self.direct) # Overwrite or append..
+        # elif(saveoption == 'overwrite'):
+        #     print("Overwriting or appending " + self.direct) # Overwrite or append..
         else:
             print('Invalid Saving Option')
 
 #################################
 #################################
 
+    # Not used for new data-structure
     def saveSensors(self, dataq, hand=''):
         ff = open(self.direct + self.filename + '_sensors' + hand + '.csv', 'w')
         print(self.filename)
@@ -70,6 +73,34 @@ class ReadWrite:
             datalist = list(dataq.get(block=True))
             ff.write('%.6f' % datalist[0] + ', ' + str(datalist[2:])[1:-1] + '\n')
         ff.close()
+
+
+    def saveSensorsFromDict(self, dataq, hand):
+        ff = open(self.direct + self.filename + '_sensors_'+hand+'.csv', 'w')
+        print('saving to: ', self.filename)
+        imu_labels = ['yaw', 'pitch', 'roll', 'gx', 'gy', 'gz']
+        flex_labels = ['f1', 'f2', 'f3', 'f4', 'f5']
+        press_labels = ['p1', 'p2', 'p3', 'p4', 'p5']
+
+        sorted_labels = ['timestamp', 'imu', 'flex', 'press']
+        included_sensors = [label for label in sorted_labels if label in list(dataq.get(block=True).keys())] 
+        labels = []
+        labels += ['time'] if 'timestamp' in included_sensors else []
+        labels += imu_labels if 'imu' in included_sensors else []
+        labels += flex_labels if 'flex' in included_sensors else []
+        labels += press_labels if 'press' in included_sensors else []
+
+        ff.write(', '.join(labels) + '\n')
+        while(not dataq.empty()):
+            elem = dataq.get(block=True)
+            sensors_data = []
+            for sensor in included_sensors:
+                sensors_data += elem[sensor]
+            sensor_string = ', '.join(['{:.5f}'.format(i) if type(i) == float else str(i) for i in sensors_data])
+            ff.write(sensor_string + '\n')
+        ff.close()
+        
+
 
     def saveKeyboard(self, dataq):
         ff = open( self.direct + self.filename + '_keyboard.csv', 'w')
