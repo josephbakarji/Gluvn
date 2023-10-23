@@ -82,30 +82,31 @@ class NoteMapper:
         return self.notes_in_scale[idx_root_note:idx_root_note+num_notes]
 
 
-    def moving_window(self, num_rhf=5):
-        window_trigger = self.window_setter(mode='standard')
-        note_windows = self.generate_windows(window_trigger, num_rhf=num_rhf)
+    def moving_window(self, num_rhf=5, num_lhf=5):
+        window_trigger = self.window_setter(mode='standard', num_fingers=num_lhf)
+        note_windows = self.generate_windows(window_trigger, num_fingers=num_rhf)
         return window_trigger, note_windows
 
 
-    def generate_windows(self, window_trigger, num_rhf=5):
+    def generate_windows(self, window_trigger, num_fingers=5):
         first_note = self.root_note+'3'
         first_note_midi = self.note2midi[first_note]
         idx_root_note = self.notes_in_scale.index(first_note_midi)
+        window_trigger_array = np.array(window_trigger)
         window_list = []
 
         # add windows above first note
         for i in range(10):
-            idx0 = idx_root_note + num_rhf*i
-            window_list.append(self.notes_in_scale[idx0:idx0+num_rhf])
-            if window_list[-1][-1] >= self.notes_in_scale[-num_rhf]:
+            idx0 = idx_root_note + num_fingers*i
+            window_list.append(self.notes_in_scale[idx0:idx0+num_fingers])
+            if window_list[-1][-1] >= self.notes_in_scale[-num_fingers]:
                 break
 
         # add windows below first note
         for i in range(10):
-            idx0 = idx_root_note - num_rhf*(i+1)
-            window_list.append(self.notes_in_scale[idx0:idx0+num_rhf])
-            if window_list[-1][-1] <= self.notes_in_scale[num_rhf]:
+            idx0 = idx_root_note - num_fingers*(i+1)
+            window_list.append(self.notes_in_scale[idx0:idx0+num_fingers])
+            if window_list[-1][-1] <= self.notes_in_scale[num_fingers]:
                 break
         
         # Sort windows according to first note, and turn to numpy array
@@ -117,34 +118,60 @@ class NoteMapper:
         num_windows = window_trigger.shape[0]
         idx_mid_window_list = np.where(window_list[:, 0] == first_note_midi)[0][0] 
         open_palm_idx = np.where(fingers_bent == 0)[0][0]
+
+        while (open_palm_idx > idx_mid_window_list):
+            # add row to the beginning of window_list (same as existing first row) 
+            window_list = np.vstack((window_list[0, :], window_list)) 
+            idx_mid_window_list = np.where(window_list[:, 0] == first_note_midi)[0][0] 
+
         idx0 = max(0, idx_mid_window_list - open_palm_idx)
         idxend = min(idx0+num_windows, window_list.shape[0])
         window_list = window_list[idx0:idxend, :]
 
         return window_list
 
-
-    def window_setter(self, mode='standard'):
+    def window_setter(self, mode='standard', num_fingers=5):
         # midnote and scale not used
         if mode == 'standard':
-            WArr = np.array(\
-            [[1, 1, 1, 1, 1], 
-            [0, 1, 1, 1, 1], 
-            [0, 0, 1, 1, 1], 
-            [0, 0, 0, 1, 1], 
-            [0, 0, 0, 0, 1], 
-            [0, 0, 0, 0, 0],
-            [1, 0, 0, 0, 0],
-            [1, 1, 0, 0, 0],
-            [1, 1, 1, 0, 0],
-            [1, 1, 1, 1, 0]])
-
+            if num_fingers == 5:
+                WArr = np.array(\
+                [[1, 1, 1, 1, 1], 
+                [0, 1, 1, 1, 1], 
+                [0, 0, 1, 1, 1], 
+                [0, 0, 0, 1, 1], 
+                [0, 0, 0, 0, 1], 
+                [0, 0, 0, 0, 0],
+                [1, 0, 0, 0, 0],
+                [1, 1, 0, 0, 0],
+                [1, 1, 1, 0, 0],
+                [1, 1, 1, 1, 0]])
+            elif num_fingers == 3:
+                WArr = np.array(\
+                [[1, 1, 1], 
+                [0, 1, 1], 
+                [0, 0, 1], 
+                [0, 0, 0],
+                [1, 0, 0],
+                [1, 1, 0]])
         return WArr
 
     def window_map(self, nswitch, window_trigger, note_windows):
+        print(nswitch, window_trigger)
         idx_list = np.where(np.all(window_trigger == nswitch, axis=1))[0]
         if len(idx_list) > 0:
             idx = idx_list[0]
             return note_windows[idx], idx 
         else:
             return None
+
+
+if __name__=="__main__":
+    num_rhf = 5
+    mapper = NoteMapper(root_note='C', scale='major')
+    window_trigger = mapper.window_setter(mode='standard')
+    note_windows = mapper.generate_windows(window_trigger, num_rhf=num_rhf)
+    for i in range(window_trigger.shape[0]):
+        print(window_trigger[i, :])
+        names = [mapper.midi2note[note] for note in note_windows[i, :]]
+        print(names)
+        print("---")
