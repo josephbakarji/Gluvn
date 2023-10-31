@@ -1,4 +1,4 @@
-from port_read import ReadSerial, ParseSerial
+from port_read import Reader
 from __init__ import portL, portR, baud, mainDir
 import time
 import numpy as np
@@ -11,43 +11,45 @@ caltime = 5
 save_h = True
 
 ## Which hand?
-hand = input("Which hand are you calibrating? Default R, (L/R) \n").upper()
-if hand == "R":
+hand = input("Which hand are you calibrating? Default R, (L/R) \n").lower()
+if hand == "r":
     port = portR
-elif hand == "L":
+elif hand == "l":
     port = portL
 else:
     print("Invalid input. Defaulting to R.")
-    hand = "R"
+    hand = "r"
     port = portR
 
 time0 = time.time()
-sensThread = ReadSerial(port, baud)
-parseThread = ParseSerial(sensThread.sensq, time0, format='>sHHHHHHHHHHHHHHHH', length_checksum=33)
-parseThread.readFullData = True
-sensThread.start()
-parseThread.start()
 
+save = True # sets qsize to 0 (required for reading)
+sensor_config = {hand: {'flex': True, 'press': True, 'imu': False}}
+reader = Reader(sensor_config=sensor_config, save=save,
+                message_format='>sHHHHHHHHHHHHHHHH', length_checksum=33)
 
+reader.start_readers()
 
 ## Flatten hand:
 key = input("Open hand, straighten fingers, and press any key to continue \n")
 timerec0 = time.time()
 
-openhand_list = []
-with parseThread.dataq.mutex:
-    parseThread.dataq.queue.clear()
+with reader.threads[hand]['parser'].getQ().mutex:
+    reader.threads[hand]['parser'].getQ().queue.clear()
 
+openhand_dict = {'press': [], 'flex': []}
 while time.time() - timerec0 < caltime:
-    openhand_list.append(parseThread.dataq.get(block=True)[8:18])
+    sensor_val = reader.threads[hand]['parser'].getQ().get(block=True)
+    for sensor in openhand_dict.keys():
+        openhand_dict[sensor].append(sensor_val[sensor])
 
-openhand = np.array(openhand_list)
-openhand_mean = np.mean(openhand, axis=0)
-flex_openhand_mean = openhand_mean[:5]
-press_openhand_mean = openhand_mean[5:]
+sensors = list(openhand_dict.keys())
+for sensor in sensors:
+    openhand_dict[sensor] = np.array(openhand_dict[sensor])
+    openhand_dict[sensor+'_mean'] = np.mean(openhand_dict[sensor], axis=0)
 
-print("Open hand mean, MIN_FLEX: ", flex_openhand_mean)
-print("No press mean, MIN_PRESS: ", press_openhand_mean)
+print("Open hand mean, MIN_FLEX: ", openhand_dict['flex_mean'])
+print("No press mean, MIN_PRESS: ", openhand_dict['press_mean'])
 
 
 ## Fist hand:
@@ -55,11 +57,12 @@ key = input("Close hand, Make fist, and press any key to continue \n")
 timerec0 = time.time()
 
 fisthand_list = []
-with parseThread.dataq.mutex:
-    parseThread.dataq.queue.clear()
+with reader.threads[hand]['parser'].getQ().mutex:
+    reader.threads[hand]['parser'].getQ().queue.clear()
 
 while time.time() - timerec0 < caltime:
-    fisthand_list.append(parseThread.dataq.get(block=True)[8:13])
+    sensor_val = reader.threads[hand]['parser'].getQ().get(block=True)
+    fisthand_list.append(sensor_val['flex'])
 
 fisthand = np.array(fisthand_list)
 flex_fisthand_mean = np.mean(fisthand, axis=0)
@@ -74,12 +77,15 @@ for i in range(5):
     timerec0 = time.time()
 
     press_list = []
-    with parseThread.dataq.mutex:
-        parseThread.dataq.queue.clear()
+    with reader.threads[hand]['parser'].getQ().mutex:
+        reader.threads[hand]['parser'].getQ().queue.clear()
 
     while time.time() - timerec0 < caltime:
-        press_list.append(parseThread.dataq.get(block=True)[13:18])
+        sensor_val = reader.threads[hand]['parser'].getQ().get(block=True)
+        print(sensor_val['press'])
+        press_list.append(sensor_val['press'])
 
+    print(press_list)
     press_list = np.array(press_list)[:, i]
     press_finger_max.append( np.min(press_list, axis=0) ) # pressure sensor value decreases when pressed
 
@@ -105,8 +111,8 @@ if save_h:
 
     new_content.append(f"const int {prefix}MIN_FLEX[] = {{")
     for i in range(4):
-        new_content.append(f"{int(flex_openhand_mean[i])}, ")
-    new_content.append(f"{int(flex_openhand_mean[4])}}};\n")
+        new_content.append(f"{int(openhand_dict['flex_mean'][i])}, ")
+    new_content.append(f"{int(openhand_dict['flex_mean'][4])}}};\n")
 
     new_content.append(f"const int {prefix}MAX_FLEX[] = {{")
     for i in range(4):
@@ -115,8 +121,8 @@ if save_h:
 
     new_content.append(f"const int {prefix}MIN_PRESS[] = {{")
     for i in range(4):
-        new_content.append(f"{int(press_openhand_mean[i])}, ")
-    new_content.append(f"{int(press_openhand_mean[4])}}};\n")
+        new_content.append(f"{int(openhand_dict['press_mean'][i])}, ")
+    new_content.append(f"{int(openhand_dict['press_mean'][4])}}};\n")
 
     new_content.append(f"const int {prefix}MAX_PRESS[] = {{")
     for i in range(4):
@@ -155,10 +161,10 @@ if save_h:
             f.write("#endif\n")
 
     # Copy the file to the desired location
-    shutil.copy(filepath, os.path.join(mainDir, "..", "arduino", "sendsens_Right", "calibration.h"))
+    shutil.copy(filepath, os.path.join(mainDir, "..", "arduino", "sendsens", "calibration.h"))
 
 else:
-    calibration_data = np.vstack((flex_openhand_mean, flex_fisthand_mean, press_openhand_mean, press_finger_max))
+    calibration_data = np.vstack((openhand_dict['flex_mean'], flex_fisthand_mean, openhand_dict['press_mean'], press_finger_max))
     np.savetxt(os.path.join(mainDir, "data", "calibration/calibration_pressflex.txt"), calibration_data, fmt="%10.3f", delimiter=",")
     print("Calibration data saved in calibration_data.txt")
 

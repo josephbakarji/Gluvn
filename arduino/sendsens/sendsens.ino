@@ -12,13 +12,17 @@
 
 int ret;
 
-char* hand = "r"; // Choose either 'r' or 'l'
+char* hand = "l"; // Choose either 'r' or 'l'
 int use_gyro = false;
-bool write_serial = true; 
-bool calibration_mode = false; // only works if write_serial
-int print_mode = 0;
-const long interval = 5;  // Interval at which to read sensors and send data (milliseconds)
+bool calibration_mode = true; // only works if write_serial
 
+// print_mode = 0 -> doesn't print
+// print_mode = 1 -> prints raw values
+// print_mode = 2 -> prints calibrated values
+bool write_serial = false; 
+int print_mode = 0;
+
+const long interval = 4;  // Interval at which to read sensors and send data (milliseconds)
 int gyro_max = 2000; // Range is +/- 2000 deg/s by default 
 int accel_max = 32767.0; // Range is +/- 2g by default
 
@@ -31,10 +35,6 @@ int gx, gy, gz, roll, pitch, yaw, ax, ay, az;
 uint16_t gx_cal, gy_cal, gz_cal, roll_cal, pitch_cal, yaw_cal, ax_cal, ay_cal, az_cal;
 
 unsigned long previousMillis = 0;
-
-// print_mode = 0 -> doesn't print
-// print_mode = 1 -> prints raw values
-// print_mode = 2 -> prints calibrated values
 
 
 const int* MIN_FLEX;
@@ -200,7 +200,7 @@ void loop() {
             Serial.print("\t");
           }
 
-          // Pitch Roll Yaw
+          //  Yaw Roll Pitch 
           Serial.print(yaw_cal); Serial.print("\t");
           Serial.print(roll_cal); Serial.print("\t");
           Serial.print(pitch_cal); Serial.print("\t");
@@ -212,6 +212,8 @@ void loop() {
           Serial.print(ax_cal); Serial.print("\t");
           Serial.print(ay_cal); Serial.print("\t");
           Serial.print(az_cal); Serial.print("\t");
+
+          // Serial.print(sq(ax_cal)+sq(ay_cal)+sq(az_cal));
 
           Serial.print("\n");
       }

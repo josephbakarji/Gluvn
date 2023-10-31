@@ -36,7 +36,6 @@ class MidiWriter:
     def trig_note(self, notemidi, vel):
         message = mido.Message('note_on', note=notemidi, velocity=vel )#sens2vol(sensarr[i], 'linear'))
         self.midiout.send(message)
-        print( notemidi )
 
     def pitch_bend(self, pitch_change):
         #pitch = note2numdict[notename]

@@ -25,6 +25,8 @@ This package uses Python 3.5. The following packages are required
 ## Virtual instrument
 MIDI messages are sent from the python code to a DAW (e.g. GarageBand) on the computer. For this you need to setup a virtual midi port. For mac, use the following [instructions](http://feelyoursound.com/setup-midi-os-x/). Then, replace the `IACDriver` variable `__init__.py` with your virtual midi port name. Once this is done, the DAW will discover the app as a midi instrument.
 
+- In my experience Aftertouch is best supported by Ableton's Expression Control, which offers the most flexibility in assigning different modes of expression to velocity, Pitchbend etc.
+
 # Usage
 For compiling a non-GUI version, run `python Main.py`. In `Main.py`:
 - For `PressureNotes = 1`, the glove triggers a set of notes with the pressure sensors specified by `n1`, with threshold pressure `pressThresh`

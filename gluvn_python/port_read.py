@@ -25,6 +25,8 @@ class Reader:
                  directory=EXPDIR, 
                  save_file='test000',
                  parse_file=None,
+                 message_format=None,
+                 length_checksum=23,
                  sensor_config={'r': {'flex': True, 'press': True, 'imu': True}},
                  save=False):
 
@@ -34,6 +36,8 @@ class Reader:
         self.sensor_config = sensor_config
         self.save = save
         self.save_file = save_file
+        self.message_format = message_format or '>sHHHHHHBBBBBBBBBB'
+        self.length_checksum = length_checksum 
         self.parse_qsize = 0 if self.save else 30
         self.parse_file = None if parse_file is None else os.path.join(directory, parse_file)
         self.threads = self.make_reader_threads()
@@ -46,7 +50,7 @@ class Reader:
             if self.parse_file is None:
                 threads[hand]['port'] = portR if hand == 'r' else portL
                 threads[hand]['serial'] = ReadSerial(threads[hand]['port'], self.baud)
-                threads[hand]['parser'] = ParseSerial(threads[hand]['serial'].getQ(), time0, 
+                threads[hand]['parser'] = ParseSerial(threads[hand]['serial'].getQ(), time0, format=self.message_format, length_checksum=self.length_checksum,
                                                       **self.sensor_config[hand], qsize=self.parse_qsize)
             else:
                 threads[hand]['parser'] = ParseFile(self.directory, self.parse_file, hand)
@@ -306,5 +310,6 @@ if __name__ == "__main__":
                     save=save,
                     save_file='test00')
     
-    reader.runSensors()
-    reader.saveSensors()
+    reader.start_readers()
+    # reader.runSensors()
+    # reader.saveSensors()
