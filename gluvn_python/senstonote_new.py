@@ -33,7 +33,8 @@ class SensorProcess(Thread):
                  trigger_thresh=180, 
                  trigger_hysteresis=5,
                  mod_sensors=None,
-                 mod_idx=None):
+                 mod_idx=None,
+                 send_all_data=False):
 
         super().__init__()
         self.hand = hand
@@ -41,6 +42,7 @@ class SensorProcess(Thread):
         self.trigger_sensor = trigger_sensor # a list if doing continuous reading
         self.mod_sensors = mod_sensors
         self.mod_idx = mod_idx
+        self.send_all_data = send_all_data
         self.collect_q = collect_q
         self.trigger_thresh = trigger_thresh
         self.trigger_hysteresis = trigger_hysteresis
@@ -63,9 +65,7 @@ class SensorProcess(Thread):
         self.trig_on, self.trig_off = trigon, trigoff
 
         return n_switch
-    
-    def rescale_input(self, value, old_min, old_max, new_min, new_max):
-        pass
+
 
     def run(self):
         send_dict = {'hand': self.hand}
@@ -73,28 +73,30 @@ class SensorProcess(Thread):
             # Collect reading queue
             sensor_dict = self.sensor_q.get(block=True)
             
+            if self.send_all_data:
+                ## NOTE: Can't do triggering for multiple tigger sensors at a time (see app_jacob_choir)
+                sensor_dict['hand'] = self.hand
+                self.collect_q.put(sensor_dict)
+            
+            else:
 
-            # Process trigger sensor
-            n_switch = self.trigger_logic(sensor_dict[self.trigger_sensor])
+                n_switch = self.trigger_logic(sensor_dict[self.trigger_sensor])
+                ## append modulation (contiuous) sensor data to reading_collect
+                # Note: might be compared to passing entire list to be processed in app (?)
+                mod_sensors_h = self.mod_sensors
+                if mod_sensors_h[0] is not None: ## Fix: breaks if mod_sensors is None
+                    for idx, sensor in enumerate(mod_sensors_h):
+                        mod_sens_data = sensor_dict[sensor]
+                        if self.mod_idx is not None: 
+                            mod_sens_data = mod_sens_data[self.mod_idx[idx]]
+                            sensor = sensor + str(self.mod_idx[idx])
+                        send_dict[sensor] = mod_sens_data
 
-            ## append modulation (contiuous) sensor data to reading_collect
-            # Note: might be compared to passing entire list to be processed in app (?)
-            mod_sensors_h = self.mod_sensors
-            if mod_sensors_h[0] is not None:
-                for idx, sensor in enumerate(mod_sensors_h):
-                    mod_sens_data = sensor_dict[sensor]
-                    if self.mod_idx is not None: 
-                        mod_sens_data = mod_sens_data[self.mod_idx[idx]]
-                        sensor = sensor + str(self.mod_idx[idx])
-                    send_dict[sensor] = mod_sens_data
+                ## might be inefficient 
 
-            ## This condition assumes that the modulation is only used if a note is triggered (not true in some applications)
-            if np.any(n_switch) or (mod_sensors_h is not None and np.any(self.turn_state)): 
-                send_dict['switch'] = n_switch
-
-                self.collect_q.put(send_dict)
-
-
+                if (np.any(n_switch) or (mod_sensors_h is not None and np.any(self.turn_state))): 
+                    send_dict['switch'] = n_switch
+                    self.collect_q.put(send_dict)
 
 
 
@@ -107,6 +109,7 @@ class BaseApp(Thread):
                  trigger_sensors=None, 
                  mod_sensors=None,
                  mod_idx=None,
+                 send_all_data=False,
                  hands=['r', 'l'],
                  hysteresis=5):
         super().__init__()
@@ -116,6 +119,7 @@ class BaseApp(Thread):
         self.trigger_sensors = trigger_sensors or {'l': 'flex', 'r': 'press'}
         self.mod_sensors = mod_sensors or {'l': [None], 'r': [None]}
         self.mod_idx = mod_idx or {'l': [None], 'r': [None]}
+        self.send_all_data = send_all_data
         self.sensor_config = self._get_sensor_config(sensor_config) 
         self.collect_q = queue.Queue(maxsize=20)
         self.hands = hands 
@@ -124,15 +128,21 @@ class BaseApp(Thread):
         self.midi_writer = MidiWriter()
 
     def _get_sensor_config(self, sensor_config):
-        if sensor_config is None:
+        if self.send_all_data: 
+            sensor_config={'r': {'flex': True, 'press': True, 'imu': True},
+                        'l': {'flex': True, 'press': True, 'imu': True}}
+
+        elif sensor_config is None:
             sensor_config={'r': {'flex': False, 'press': False, 'imu': False},
                         'l': {'flex': False, 'press': False, 'imu': False}}
             for hand in ['r', 'l']:
                 for sensor in sensor_config[hand].keys():
                     if sensor in self.mod_sensors[hand]:
-                        sensor_config[hand][sensor] = True
+                            sensor_config[hand][sensor] = True
                     if sensor == self.trigger_sensors[hand]:
                         sensor_config[hand][sensor] = True
+
+
         return sensor_config
 
     def initialize_triggers(self):
@@ -141,7 +151,8 @@ class BaseApp(Thread):
             triggers[hand] = SensorProcess(
                 hand, self.reader.threads[hand]['parser'].getQ(), self.collect_q, 
                 trigger_sensor=self.trigger_sensors[hand], trigger_thresh=self.thresholds[self.trigger_sensors[hand]], 
-                trigger_hysteresis=self.hysteresis, mod_sensors=self.mod_sensors[hand], mod_idx=self.mod_idx[hand]
+                trigger_hysteresis=self.hysteresis, mod_sensors=self.mod_sensors[hand], mod_idx=self.mod_idx[hand], 
+                send_all_data=self.send_all_data
             )
             triggers[hand].start()
         self.triggers = triggers
@@ -151,10 +162,10 @@ class BaseApp(Thread):
         notemaps = self.mapper.basic_map_2hands()  # Assumes a method that maps notes for both hands
         self.initialize_triggers()
 
+
         while True: 
             reading_dict = self.collect_q.get(block=True)
             self.midi_writer.trig_note_array(reading_dict['switch'], notemaps[reading_dict['hand']])
-
 
 
 
@@ -215,7 +226,6 @@ class MovingWindow(BaseApp):
             else:
                 if self.volume_controller is not None:
                     self.global_volume = self.volume_control(reading_dict)
-                    print(self.global_volume)
                     self.midi_writer.aftertouch(self.global_volume)#, channel=1)
 
                 if self.pitch_bender is not None:

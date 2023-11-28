@@ -12,17 +12,18 @@
 
 int ret;
 
-char* hand = "l"; // Choose either 'r' or 'l'
+char* hand = "r"; // Choose either 'r' or 'l'
 int use_gyro = false;
-bool calibration_mode = true; // only works if write_serial
+bool calibration_mode = false; // only works if write_serial
+bool write_serial = true; 
 
 // print_mode = 0 -> doesn't print
 // print_mode = 1 -> prints raw values
 // print_mode = 2 -> prints calibrated values
-bool write_serial = false; 
 int print_mode = 0;
 
 const long interval = 4;  // Interval at which to read sensors and send data (milliseconds)
+
 int gyro_max = 2000; // Range is +/- 2000 deg/s by default 
 int accel_max = 32767.0; // Range is +/- 2g by default
 

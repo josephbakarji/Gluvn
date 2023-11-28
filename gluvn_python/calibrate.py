@@ -164,6 +164,7 @@ if save_h:
     shutil.copy(filepath, os.path.join(mainDir, "..", "arduino", "sendsens", "calibration.h"))
 
 else:
+    # DEPRECATED
     calibration_data = np.vstack((openhand_dict['flex_mean'], flex_fisthand_mean, openhand_dict['press_mean'], press_finger_max))
     np.savetxt(os.path.join(mainDir, "data", "calibration/calibration_pressflex.txt"), calibration_data, fmt="%10.3f", delimiter=",")
     print("Calibration data saved in calibration_data.txt")

@@ -25,6 +25,13 @@ class MidiWriter:
                 playing_notes[i] = None
         return playing_notes 
 
+    def turn_off_all_playing(self, playing_notes):
+        for i in range(len(playing_notes)):
+            if playing_notes[i] is not None:
+                self.trig_note( playing_notes[i], 0)
+                playing_notes[i] = None
+        return playing_notes 
+
     def trig_note_array(self, switch, notearr, vel=80):
         for i in range(len(switch)):
             if(switch[i] == 1):
