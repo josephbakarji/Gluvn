@@ -14,6 +14,7 @@ from mapper import NoteMapper
 from port_read import Reader
 from midi_writer import MidiWriter
 import queue
+from itertools import islice, repeat
 
 # Constants
 
@@ -111,10 +112,10 @@ class BaseApp(Thread):
                  mod_idx=None,
                  send_all_data=False,
                  hands=['r', 'l'],
-                 hysteresis=5):
+                 hysteresis=None):
         super().__init__()
         self.daemon = True
-        self.hysteresis = hysteresis
+        self.hysteresis = hysteresis or {'flex': 5, 'press': 5}
         self.thresholds = thresholds or {'flex': 200, 'press': 15}
         self.trigger_sensors = trigger_sensors or {'l': 'flex', 'r': 'press'}
         self.mod_sensors = mod_sensors or {'l': [None], 'r': [None]}
@@ -148,10 +149,14 @@ class BaseApp(Thread):
     def initialize_triggers(self):
         triggers = {}
         for hand in self.hands:
+            trigger_sensor = self.trigger_sensors[hand]
             triggers[hand] = SensorProcess(
                 hand, self.reader.threads[hand]['parser'].getQ(), self.collect_q, 
-                trigger_sensor=self.trigger_sensors[hand], trigger_thresh=self.thresholds[self.trigger_sensors[hand]], 
-                trigger_hysteresis=self.hysteresis, mod_sensors=self.mod_sensors[hand], mod_idx=self.mod_idx[hand], 
+                trigger_sensor=trigger_sensor,
+                trigger_thresh=self.thresholds[trigger_sensor], 
+                trigger_hysteresis=self.hysteresis[trigger_sensor], 
+                mod_sensors=self.mod_sensors[hand], 
+                mod_idx=self.mod_idx[hand], 
                 send_all_data=self.send_all_data
             )
             triggers[hand].start()
@@ -175,22 +180,36 @@ class MovingWindow(BaseApp):
                  pitch_bender=None, 
                  num_lh_fingers=5, 
                  num_rh_fingers=5, 
-                 avg_window_size=10,
+                 averaging_window_size=10,
                  base_volume=20,
+                 instrument='double_flex',
+                 averaging_window_controller=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
-        self.window_trigger, self.note_windows = self.mapper.moving_window(num_lhf=num_lh_fingers, num_rhf=num_rh_fingers)
         self.num_lh_fingers = num_lh_fingers 
         self.num_rh_fingers = num_rh_fingers 
         self.playing_notes = [None]*num_rh_fingers
         self.volume_controller = volume_controller
         self.pitch_bender = pitch_bender
-        self.averaging_queue = deque(maxlen=avg_window_size)
+        self.averaging_window_size_max = averaging_window_size
+        self.averaging_window_controller = averaging_window_controller
+        self.averaging_queue = deque(repeat(0, self.averaging_window_size_max), maxlen=self.averaging_window_size_max)
         self.base_volume = base_volume
+        self.instrument = instrument
         
         self.pitch_bend_limit = 8192
         self.global_volume = 10
+        self.averaging_window_size = self.averaging_window_size_max
         self.note_array = None
+        
+        # Initialize note windows based on instrument type
+        if self.instrument == 'double_flex':
+            self.window_trigger, self.note_windows = self.mapper.moving_window(num_lhf=num_lh_fingers, num_rhf=num_rh_fingers)
+            self.note_array, note_array_idx = self.mapper.window_map([0]*self.num_lh_fingers, self.window_trigger, self.note_windows)
+        elif self.instrument == 'ten_finger':
+            self.note_windows = self.mapper.basic_map_2hands()
+        else:
+            raise ValueError('Instrument not recognized. Please choose from double_flex or ten_finger')
 
     def input_scaling(self, input, min_output=0, max_output=127, shift=0, min_input=0, max_input=BYTE):
         output = int( min_output + (max_output - min_output) * ((input + shift) - min_input) / (max_input - min_input))
@@ -211,8 +230,28 @@ class MovingWindow(BaseApp):
             norm = np.sqrt((reading_dict['imu3']-TWO_BYTE/2.0)**2 + (reading_dict['imu4']-TWO_BYTE/2.0)**2 + (reading_dict['imu5']-TWO_BYTE/2.0)**2 )
             volume = max(norm - ZERO_ACCEL, 0)
             self.averaging_queue.append(volume)
-            return self.base_volume + self.input_scaling(np.mean(self.averaging_queue), max_output=127-self.base_volume, min_input=0, max_input=15000)
-            
+            mean = sum(islice(self.averaging_queue, self.averaging_window_size_max - self.averaging_window_size, self.averaging_window_size_max))/self.averaging_window_size
+            return self.base_volume + self.input_scaling(mean, max_output=127-self.base_volume, min_input=0, max_input=15000)
+
+    def window_averaging_conrol(self, reading_dict):
+        return self.input_scaling(reading_dict[self.averaging_window_controller], max_output=self.averaging_window_size_max, min_input=0, max_input=TWO_BYTE)
+
+    def ten_finger_instrument(self, reading_dict):
+        # print(f"Hand: {reading_dict['hand']}, Switch: {reading_dict.get('switch', None)}")
+        self.midi_writer.trig_note_array(reading_dict['switch'], self.note_windows[reading_dict['hand']], vel=self.global_volume)
+
+        if self.averaging_window_controller is not None and reading_dict['hand']=='l':
+            self.averaging_window_size = self.window_averaging_conrol(reading_dict) 
+            # print(f"Window size: {self.averaging_window_size}")
+
+        if self.volume_controller is not None:
+            self.global_volume = self.volume_control(reading_dict)
+            # print(f"Volume: {self.global_volume}")
+            self.midi_writer.aftertouch(self.global_volume)
+
+        if self.pitch_bender is not None:
+            pitchbend_val = self.pitch_bend(reading_dict) 
+            self.midi_writer.pitch_bend(pitchbend_val)
 
     def double_flex_instrument(self, reading_dict):
         if reading_dict['hand'] == 'l':
@@ -226,22 +265,22 @@ class MovingWindow(BaseApp):
             else:
                 if self.volume_controller is not None:
                     self.global_volume = self.volume_control(reading_dict)
-                    self.midi_writer.aftertouch(self.global_volume)#, channel=1)
+                    self.midi_writer.aftertouch(self.global_volume)
 
                 if self.pitch_bender is not None:
                     pitchbend_val = self.pitch_bend(reading_dict) 
                     self.midi_writer.pitch_bend(pitchbend_val)
 
-
     def run(self):
         self.reader.start_readers()
         self.initialize_triggers()
-        self.note_array, note_array_idx = self.mapper.window_map([0]*self.num_lh_fingers, self.window_trigger, self.note_windows)
-        
         
         while True:
             reading_dict = self.collect_q.get(block=True)
-            self.double_flex_instrument(reading_dict)
+            if self.instrument == 'double_flex':
+                self.double_flex_instrument(reading_dict)
+            else:
+                self.ten_finger_instrument(reading_dict)
 
 
 ##############################################################################
