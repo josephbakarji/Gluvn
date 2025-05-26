@@ -8,14 +8,25 @@ import time
 import queue
 
 class SensorPlotter(QMainWindow):
+    # === USER-CONTROLLED PARAMETERS ===
+    LINE_WIDTH = 3  # Line width for all plots
+    POINTS_SKIP = 4  # Number of points to skip (downsampling factor)
+    MAX_POINTS = 1000  # Buffer size
+    # Colors for each channel (can be changed by user)
+    FLEX_COLORS = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255)]
+    PRESS_COLORS = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255)]
+    ORIENTATION_COLORS = [(255,0,0), (0,255,0), (0,0,255)]  # Red, Green, Blue
+    ACCEL_COLORS = [(255,128,0), (128,0,255), (0,128,255)]  # Orange, Purple, Cyan
+    # ================================
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Sensor Data Plotter')
         self.setGeometry(100, 100, 1200, 800)
         
-        # Initialize sensor reading with both flex and pressure sensors
-        self.sensor_config = {'l': {'flex': True, 'press': True, 'imu': False},
-                            'r': {'flex': True, 'press': True, 'imu': False}}
+        # Initialize sensor reading with both flex, pressure, and IMU sensors
+        self.sensor_config = {'l': {'flex': True, 'press': True, 'imu': True},
+                            'r': {'flex': True, 'press': True, 'imu': True}}
         self.reader = Reader(sensor_config=self.sensor_config, save=False)
         
         # Create main widget and layout
@@ -30,30 +41,35 @@ class SensorPlotter(QMainWindow):
         self.create_side_by_side_layout(main_layout)
         
         # Define buffer size
-        self.max_points = 1000
+        self.max_points = self.MAX_POINTS
         
         # Initialize data storage with numpy arrays for better performance
         self.data_buffer = {
             'l': {'flex': np.zeros((self.max_points, 5), dtype=np.float32),
-                  'press': np.zeros((self.max_points, 5), dtype=np.float32)},
+                  'press': np.zeros((self.max_points, 5), dtype=np.float32),
+                  'imu': np.zeros((self.max_points, 6), dtype=np.float32)},
             'r': {'flex': np.zeros((self.max_points, 5), dtype=np.float32),
-                  'press': np.zeros((self.max_points, 5), dtype=np.float32)}
+                  'press': np.zeros((self.max_points, 5), dtype=np.float32),
+                  'imu': np.zeros((self.max_points, 6), dtype=np.float32)}
         }
         self.buffer_index = {
-            'l': {'flex': 0, 'press': 0},
-            'r': {'flex': 0, 'press': 0}
+            'l': {'flex': 0, 'press': 0, 'imu': 0},
+            'r': {'flex': 0, 'press': 0, 'imu': 0}
         }
         
-        # Create curves with different colors
-        colors = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255)]
+        # Create curves with user-defined colors and line width
         self.curves = {
             'l': {
-                'flex': [self.flex_plot_l.plot(pen=pg.mkPen(color=colors[i], width=2)) for i in range(5)],
-                'press': [self.press_plot_l.plot(pen=pg.mkPen(color=colors[i], width=2)) for i in range(5)]
+                'flex': [self.flex_plot_l.plot(pen=pg.mkPen(color=self.FLEX_COLORS[i], width=self.LINE_WIDTH)) for i in range(5)],
+                'press': [self.press_plot_l.plot(pen=pg.mkPen(color=self.PRESS_COLORS[i], width=self.LINE_WIDTH)) for i in range(5)],
+                'orientation': [self.orientation_plot_l.plot(pen=pg.mkPen(color=self.ORIENTATION_COLORS[i], width=self.LINE_WIDTH)) for i in range(3)],
+                'accel': [self.accel_plot_l.plot(pen=pg.mkPen(color=self.ACCEL_COLORS[i], width=self.LINE_WIDTH)) for i in range(3)]
             },
             'r': {
-                'flex': [self.flex_plot_r.plot(pen=pg.mkPen(color=colors[i], width=2)) for i in range(5)],
-                'press': [self.press_plot_r.plot(pen=pg.mkPen(color=colors[i], width=2)) for i in range(5)]
+                'flex': [self.flex_plot_r.plot(pen=pg.mkPen(color=self.FLEX_COLORS[i], width=self.LINE_WIDTH)) for i in range(5)],
+                'press': [self.press_plot_r.plot(pen=pg.mkPen(color=self.PRESS_COLORS[i], width=self.LINE_WIDTH)) for i in range(5)],
+                'orientation': [self.orientation_plot_r.plot(pen=pg.mkPen(color=self.ORIENTATION_COLORS[i], width=self.LINE_WIDTH)) for i in range(3)],
+                'accel': [self.accel_plot_r.plot(pen=pg.mkPen(color=self.ACCEL_COLORS[i], width=self.LINE_WIDTH)) for i in range(3)]
             }
         }
         
@@ -68,7 +84,7 @@ class SensorPlotter(QMainWindow):
     def create_control_panel(self, main_layout):
         """Create control panel with checkboxes for each sensor type"""
         control_group = QGroupBox("Sensor Controls")
-        control_group.setFixedHeight(100)  # Fixed height to prevent expansion
+        control_group.setFixedHeight(140)  # Increased height for additional IMU controls
         control_layout = QHBoxLayout(control_group)
         
         # Left hand controls
@@ -85,6 +101,16 @@ class SensorPlotter(QMainWindow):
         self.checkbox_l_press.stateChanged.connect(self.update_layout)
         left_layout.addWidget(self.checkbox_l_press)
         
+        self.checkbox_l_orientation = QCheckBox("Orientation (YPR)")
+        self.checkbox_l_orientation.setChecked(True)
+        self.checkbox_l_orientation.stateChanged.connect(self.update_layout)
+        left_layout.addWidget(self.checkbox_l_orientation)
+        
+        self.checkbox_l_accel = QCheckBox("Acceleration (XYZ)")
+        self.checkbox_l_accel.setChecked(True)
+        self.checkbox_l_accel.stateChanged.connect(self.update_layout)
+        left_layout.addWidget(self.checkbox_l_accel)
+        
         # Right hand controls
         right_group = QGroupBox("Right Hand")
         right_layout = QVBoxLayout(right_group)
@@ -98,6 +124,16 @@ class SensorPlotter(QMainWindow):
         self.checkbox_r_press.setChecked(True)
         self.checkbox_r_press.stateChanged.connect(self.update_layout)
         right_layout.addWidget(self.checkbox_r_press)
+        
+        self.checkbox_r_orientation = QCheckBox("Orientation (YPR)")
+        self.checkbox_r_orientation.setChecked(True)
+        self.checkbox_r_orientation.stateChanged.connect(self.update_layout)
+        right_layout.addWidget(self.checkbox_r_orientation)
+        
+        self.checkbox_r_accel = QCheckBox("Acceleration (XYZ)")
+        self.checkbox_r_accel.setChecked(True)
+        self.checkbox_r_accel.stateChanged.connect(self.update_layout)
+        right_layout.addWidget(self.checkbox_r_accel)
         
         control_layout.addWidget(left_group)
         control_layout.addWidget(right_group)
@@ -123,16 +159,24 @@ class SensorPlotter(QMainWindow):
         # Create plot widgets
         self.create_plot_widgets()
 
-        # Add both plots (flex and pressure) to both sides, always
+        # Add plots to both sides
         self.left_layout.addWidget(self.flex_plot_l, 0, 0)
         self.left_layout.addWidget(self.press_plot_l, 1, 0)
+        self.left_layout.addWidget(self.orientation_plot_l, 2, 0)
+        self.left_layout.addWidget(self.accel_plot_l, 3, 0)
         self.left_layout.setRowStretch(0, 1)
         self.left_layout.setRowStretch(1, 1)
+        self.left_layout.setRowStretch(2, 1)
+        self.left_layout.setRowStretch(3, 1)
 
         self.right_layout.addWidget(self.flex_plot_r, 0, 0)
         self.right_layout.addWidget(self.press_plot_r, 1, 0)
+        self.right_layout.addWidget(self.orientation_plot_r, 2, 0)
+        self.right_layout.addWidget(self.accel_plot_r, 3, 0)
         self.right_layout.setRowStretch(0, 1)
         self.right_layout.setRowStretch(1, 1)
+        self.right_layout.setRowStretch(2, 1)
+        self.right_layout.setRowStretch(3, 1)
 
         # Set equal sizes for left and right
         self.main_splitter.setSizes([600, 600])
@@ -141,19 +185,35 @@ class SensorPlotter(QMainWindow):
         self.update_layout()
         
     def create_plot_widgets(self):
-        """Create all plot widgets for flex and pressure sensors"""
+        """Create all plot widgets for flex, pressure, and IMU sensors"""
         # Left hand plots
         self.flex_plot_l = pg.PlotWidget(title='Left Hand Flex')
         self.flex_plot_l.showGrid(x=True, y=True)
         self.flex_plot_l.setLabel('left', 'Value')
         self.flex_plot_l.setLabel('bottom', 'Sample')
         self.flex_plot_l.setYRange(0, 255)
+        self.flex_plot_l.addLegend(offset=(10, 10))
         
         self.press_plot_l = pg.PlotWidget(title='Left Hand Pressure')
         self.press_plot_l.showGrid(x=True, y=True)
         self.press_plot_l.setLabel('left', 'Value')
         self.press_plot_l.setLabel('bottom', 'Sample')
         self.press_plot_l.setYRange(0, 255)
+        self.press_plot_l.addLegend(offset=(10, 10))
+        
+        self.orientation_plot_l = pg.PlotWidget(title='Left Hand Orientation (Yaw, Pitch, Roll)')
+        self.orientation_plot_l.showGrid(x=True, y=True)
+        self.orientation_plot_l.setLabel('left', 'Value')
+        self.orientation_plot_l.setLabel('bottom', 'Sample')
+        self.orientation_plot_l.setYRange(0, 65535)
+        self.orientation_plot_l.addLegend(offset=(10, 10))
+        
+        self.accel_plot_l = pg.PlotWidget(title='Left Hand Acceleration (Ax, Ay, Az)')
+        self.accel_plot_l.showGrid(x=True, y=True)
+        self.accel_plot_l.setLabel('left', 'Value')
+        self.accel_plot_l.setLabel('bottom', 'Sample')
+        self.accel_plot_l.setYRange(0, 65535)
+        self.accel_plot_l.addLegend(offset=(10, 10))
         
         # Right hand plots
         self.flex_plot_r = pg.PlotWidget(title='Right Hand Flex')
@@ -161,33 +221,94 @@ class SensorPlotter(QMainWindow):
         self.flex_plot_r.setLabel('left', 'Value')
         self.flex_plot_r.setLabel('bottom', 'Sample')
         self.flex_plot_r.setYRange(0, 255)
+        self.flex_plot_r.addLegend(offset=(10, 10))
         
         self.press_plot_r = pg.PlotWidget(title='Right Hand Pressure')
         self.press_plot_r.showGrid(x=True, y=True)
         self.press_plot_r.setLabel('left', 'Value')
         self.press_plot_r.setLabel('bottom', 'Sample')
         self.press_plot_r.setYRange(0, 255)
+        self.press_plot_r.addLegend(offset=(10, 10))
+        
+        self.orientation_plot_r = pg.PlotWidget(title='Right Hand Orientation (Yaw, Pitch, Roll)')
+        self.orientation_plot_r.showGrid(x=True, y=True)
+        self.orientation_plot_r.setLabel('left', 'Value')
+        self.orientation_plot_r.setLabel('bottom', 'Sample')
+        self.orientation_plot_r.setYRange(0, 65535)
+        self.orientation_plot_r.addLegend(offset=(10, 10))
+        
+        self.accel_plot_r = pg.PlotWidget(title='Right Hand Acceleration (Ax, Ay, Az)')
+        self.accel_plot_r.showGrid(x=True, y=True)
+        self.accel_plot_r.setLabel('left', 'Value')
+        self.accel_plot_r.setLabel('bottom', 'Sample')
+        self.accel_plot_r.setYRange(0, 65535)
+        self.accel_plot_r.addLegend(offset=(10, 10))
         
         # Store plot widgets for easy access
         self.plot_widgets = {
-            'l': {'flex': self.flex_plot_l, 'press': self.press_plot_l},
-            'r': {'flex': self.flex_plot_r, 'press': self.press_plot_r}
+            'l': {
+                'flex': self.flex_plot_l,
+                'press': self.press_plot_l,
+                'orientation': self.orientation_plot_l,
+                'accel': self.accel_plot_l
+            },
+            'r': {
+                'flex': self.flex_plot_r,
+                'press': self.press_plot_r,
+                'orientation': self.orientation_plot_r,
+                'accel': self.accel_plot_r
+            }
+        }
+        
+        # Channel names for legends
+        flex_names = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
+        press_names = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
+        orientation_names = ['Yaw', 'Pitch', 'Roll']
+        accel_names = ['Ax', 'Ay', 'Az']
+
+        # Create curves with user-defined colors, line width, and legend names
+        self.curves = {
+            'l': {
+                'flex': [self.flex_plot_l.plot(pen=pg.mkPen(color=self.FLEX_COLORS[i], width=self.LINE_WIDTH), name=flex_names[i]) for i in range(5)],
+                'press': [self.press_plot_l.plot(pen=pg.mkPen(color=self.PRESS_COLORS[i], width=self.LINE_WIDTH), name=press_names[i]) for i in range(5)],
+                'orientation': [self.orientation_plot_l.plot(pen=pg.mkPen(color=self.ORIENTATION_COLORS[i], width=self.LINE_WIDTH), name=orientation_names[i]) for i in range(3)],
+                'accel': [self.accel_plot_l.plot(pen=pg.mkPen(color=self.ACCEL_COLORS[i], width=self.LINE_WIDTH), name=accel_names[i]) for i in range(3)]
+            },
+            'r': {
+                'flex': [self.flex_plot_r.plot(pen=pg.mkPen(color=self.FLEX_COLORS[i], width=self.LINE_WIDTH), name=flex_names[i]) for i in range(5)],
+                'press': [self.press_plot_r.plot(pen=pg.mkPen(color=self.PRESS_COLORS[i], width=self.LINE_WIDTH), name=press_names[i]) for i in range(5)],
+                'orientation': [self.orientation_plot_r.plot(pen=pg.mkPen(color=self.ORIENTATION_COLORS[i], width=self.LINE_WIDTH), name=orientation_names[i]) for i in range(3)],
+                'accel': [self.accel_plot_r.plot(pen=pg.mkPen(color=self.ACCEL_COLORS[i], width=self.LINE_WIDTH), name=accel_names[i]) for i in range(3)]
+            }
         }
         
     def update_layout(self):
-        """Show/hide plots based on checkbox states, always keeping both rows in the layout. Expand to fill window if only one plot is visible per side."""
+        """Show/hide plots based on checkbox states"""
         # Left hand
-        left_visible = [self.checkbox_l_flex.isChecked(), self.checkbox_l_press.isChecked()]
+        left_visible = [
+            self.checkbox_l_flex.isChecked(),
+            self.checkbox_l_press.isChecked(),
+            self.checkbox_l_orientation.isChecked(),
+            self.checkbox_l_accel.isChecked()
+        ]
         self.flex_plot_l.setVisible(left_visible[0])
         self.press_plot_l.setVisible(left_visible[1])
+        self.orientation_plot_l.setVisible(left_visible[2])
+        self.accel_plot_l.setVisible(left_visible[3])
+        
         # Right hand
-        right_visible = [self.checkbox_r_flex.isChecked(), self.checkbox_r_press.isChecked()]
+        right_visible = [
+            self.checkbox_r_flex.isChecked(),
+            self.checkbox_r_press.isChecked(),
+            self.checkbox_r_orientation.isChecked(),
+            self.checkbox_r_accel.isChecked()
+        ]
         self.flex_plot_r.setVisible(right_visible[0])
         self.press_plot_r.setVisible(right_visible[1])
+        self.orientation_plot_r.setVisible(right_visible[2])
+        self.accel_plot_r.setVisible(right_visible[3])
 
         # For each side, set row stretch so that if only one plot is visible, it fills the space
-        # If both are visible, split space equally
-        # (This logic will generalize to more sensor types in the future)
         for layout, visible in [
             (self.left_layout, left_visible),
             (self.right_layout, right_visible)
@@ -211,55 +332,64 @@ class SensorPlotter(QMainWindow):
                         # Process flex data
                         if data and 'flex' in data:
                             flex_data = np.array(data['flex'], dtype=np.float32)
-                            
-                            # Apply stronger moving average smoothing
                             if self.buffer_index[hand]['flex'] > 0:
-                                # Blend with previous value (90% previous, 10% new) for more stability
                                 flex_data = 0.9 * self.data_buffer[hand]['flex'][self.buffer_index[hand]['flex']-1] + 0.1 * flex_data
-                            
-                            # If buffer is full, use numpy's roll to shift data
                             if self.buffer_index[hand]['flex'] >= self.max_points:
-                                # Roll the entire buffer left by one position
                                 self.data_buffer[hand]['flex'] = np.roll(self.data_buffer[hand]['flex'], -1, axis=0)
                                 self.buffer_index[hand]['flex'] = self.max_points - 1
-                            
-                            # Store in buffer
                             self.data_buffer[hand]['flex'][self.buffer_index[hand]['flex']] = flex_data
                             self.buffer_index[hand]['flex'] += 1
                         
                         # Process pressure data
                         if data and 'press' in data:
                             press_data = np.array(data['press'], dtype=np.float32)
-                            
-                            # Apply stronger moving average smoothing
                             if self.buffer_index[hand]['press'] > 0:
-                                # Blend with previous value (90% previous, 10% new) for more stability
                                 press_data = 0.9 * self.data_buffer[hand]['press'][self.buffer_index[hand]['press']-1] + 0.1 * press_data
-                            
-                            # If buffer is full, use numpy's roll to shift data
                             if self.buffer_index[hand]['press'] >= self.max_points:
-                                # Roll the entire buffer left by one position
                                 self.data_buffer[hand]['press'] = np.roll(self.data_buffer[hand]['press'], -1, axis=0)
                                 self.buffer_index[hand]['press'] = self.max_points - 1
-                            
-                            # Store in buffer
                             self.data_buffer[hand]['press'][self.buffer_index[hand]['press']] = press_data
                             self.buffer_index[hand]['press'] += 1
+                        
+                        # Process IMU data
+                        if data and 'imu' in data:
+                            imu_data = np.array(data['imu'], dtype=np.float32)
+                            if self.buffer_index[hand]['imu'] > 0:
+                                imu_data = 0.9 * self.data_buffer[hand]['imu'][self.buffer_index[hand]['imu']-1] + 0.1 * imu_data
+                            if self.buffer_index[hand]['imu'] >= self.max_points:
+                                self.data_buffer[hand]['imu'] = np.roll(self.data_buffer[hand]['imu'], -1, axis=0)
+                                self.buffer_index[hand]['imu'] = self.max_points - 1
+                            self.data_buffer[hand]['imu'][self.buffer_index[hand]['imu']] = imu_data
+                            self.buffer_index[hand]['imu'] += 1
                             
                     except queue.Empty:
                         break
                 
-                # Update plots for both sensor types
-                for sensor_type in ['flex', 'press']:
-                    if self.buffer_index[hand][sensor_type] > 0:
-                        # Get every 5th point to reduce data density
-                        valid_data = self.data_buffer[hand][sensor_type][:self.buffer_index[hand][sensor_type]]
-                        y = valid_data[::5]
-                        x = np.arange(len(y))
-                        
-                        # Update all curves at once
-                        for i in range(5):
-                            self.curves[hand][sensor_type][i].setData(x, y[:, i])
+                # Update plots for all sensor types
+                if self.buffer_index[hand]['flex'] > 0:
+                    valid_data = self.data_buffer[hand]['flex'][:self.buffer_index[hand]['flex']]
+                    y = valid_data[::self.POINTS_SKIP]
+                    x = np.arange(len(y))
+                    for i in range(5):
+                        self.curves[hand]['flex'][i].setData(x, y[:, i])
+                
+                if self.buffer_index[hand]['press'] > 0:
+                    valid_data = self.data_buffer[hand]['press'][:self.buffer_index[hand]['press']]
+                    y = valid_data[::self.POINTS_SKIP]
+                    x = np.arange(len(y))
+                    for i in range(5):
+                        self.curves[hand]['press'][i].setData(x, y[:, i])
+                
+                if self.buffer_index[hand]['imu'] > 0:
+                    valid_data = self.data_buffer[hand]['imu'][:self.buffer_index[hand]['imu']]
+                    y = valid_data[::self.POINTS_SKIP]
+                    x = np.arange(len(y))
+                    # Update orientation plots (first 3 channels)
+                    for i in range(3):
+                        self.curves[hand]['orientation'][i].setData(x, y[:, i])
+                    # Update acceleration plots (last 3 channels)
+                    for i in range(3):
+                        self.curves[hand]['accel'][i].setData(x, y[:, i+3])
                 
         except Exception as e:
             print(f"Error updating plots: {e}")
