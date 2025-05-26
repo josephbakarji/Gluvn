@@ -3,7 +3,6 @@ from matplotlib.widgets import Slider
 import itertools
 import csv, sys, os
 from __init__ import learnDir, figDir, EXPDIR
-from utils import merge_queues
 import numpy as np
 import copy
 import pdb
@@ -218,7 +217,7 @@ class Analyze2Hands(ReadWrite):
         elif hand == 'L':
             pdata = self.pressDataL
         else:
-            raise exception('incorrect hand')
+            raise Exception('incorrect hand')
 
         if(pdata == []):
             print('Pressure sensor data is empty')
