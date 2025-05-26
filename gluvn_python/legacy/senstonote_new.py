@@ -1,3 +1,35 @@
+"""
+GLUVN Sensor-to-Note Processing Module (Modern Version)
+
+This module contains the modern, unified sensor processing architecture for converting
+sensor data into MIDI note events. It replaces the legacy senstonote.py modules.
+
+Key Components:
+- SensorProcess: Thread that processes sensor data and applies trigger logic
+- BaseApp: Base class for all sensor-to-note applications
+- MovingWindow: Advanced application with window-based note mapping
+
+Architecture:
+- Object-oriented design with inheritance
+- Configurable sensor types and thresholds
+- Modular trigger and modulation sensor handling
+- Support for both hands with different sensor configurations
+
+Trigger Logic:
+- Hysteresis-based triggering to prevent false triggers
+- Configurable thresholds per sensor type
+- State tracking for note on/off events
+
+Applications inherit from BaseApp and implement specific sensor-to-note mappings:
+- Ten-finger instruments
+- Moving window scales
+- Acceleration-based volume control
+- Pitch bending with IMU data
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 '''
 Created on May 20, 2016
 

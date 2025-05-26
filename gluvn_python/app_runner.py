@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
+
+import sys
 import argparse
 import os
 from typing import Optional, Type
 from configs.base_config import BaseConfig
 from configs.moving_window_config import MovingWindowConfig
-from gluvn_python.sens2note_temp import MovingWindow, BaseApp
+from senstonote_modern import MovingWindow, BaseApp
 
 class AppRunner:
     """Unified runner for all Gluvn applications"""

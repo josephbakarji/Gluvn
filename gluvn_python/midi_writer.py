@@ -1,3 +1,36 @@
+"""
+GLUVN MIDI Writer Module
+
+This module handles MIDI message generation and transmission to Digital Audio Workstations (DAWs).
+It provides a clean interface for converting sensor events into MIDI messages.
+
+Key Features:
+- Note on/off message generation
+- Pitch bend control
+- Aftertouch (channel pressure) control
+- Control change messages
+- Polyphonic aftertouch
+
+MIDI Message Types Supported:
+- note_on/note_off: Basic note triggering
+- pitchwheel: Pitch bending (typically from IMU data)
+- aftertouch: Volume/expression control
+- control_change: General parameter control
+- polytouch: Per-note pressure control
+
+The module uses the mido library with rtmidi backend to communicate with
+virtual MIDI ports (e.g., IAC Driver on macOS).
+
+Usage:
+    midi_writer = MidiWriter()
+    midi_writer.trig_note(60, 80)  # Play middle C with velocity 80
+    midi_writer.pitch_bend(1000)   # Bend pitch up
+    midi_writer.aftertouch(100)    # Set channel pressure
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 '''
 Created on Mar 31, 2016
 

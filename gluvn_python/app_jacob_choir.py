@@ -1,4 +1,3 @@
-
 import numpy as np
 # from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
 from __init__ import settingsDir
@@ -8,7 +7,7 @@ from collections import deque
 from mapper import NoteMapper
 from port_read import Reader
 from midi_writer import MidiWriter
-# from senstonote_new import BaseApp
+from senstonote_modern import BaseApp
 import queue
 
 TWO_BYTE = 65535

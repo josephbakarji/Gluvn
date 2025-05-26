@@ -1,3 +1,35 @@
+"""
+GLUVN Musical Mapper Module
+
+This module handles musical theory and note mapping for the sensor glove system.
+It provides scale generation, chord mapping, and note window management.
+
+Key Features:
+- Musical scale generation (major, minor, pentatonic, etc.)
+- Note-to-MIDI number conversion
+- Two-hand note mapping
+- Moving window note selection
+- Configurable root notes and scales
+
+Supported Scales:
+- Major, Natural Minor, Harmonic Minor, Melodic Minor
+- Pentatonic scales
+- Extensible for additional scales
+
+Window System:
+The moving window system allows dynamic scale selection based on left-hand
+finger positions, while the right hand plays notes within the selected window.
+This enables access to a much larger note range than just 5-10 fingers.
+
+Usage:
+    mapper = NoteMapper(root_note='C', scale='major')
+    notes = mapper.basic_map_2hands()  # Get note mapping for both hands
+    window_trigger, note_windows = mapper.moving_window()  # Get window system
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 import numpy as np
 
 

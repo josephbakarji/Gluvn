@@ -1,8 +1,44 @@
+"""
+GLUVN Machine Learning Module
+
+This module implements machine learning algorithms for gesture recognition and
+intelligent sensor-to-note mapping in the GLUVN system.
+
+Key Features:
+- Gesture recognition (thumb-under detection)
+- Transition probability learning for note sequences
+- Logistic regression for finger movement classification
+- Training data management and cross-validation
+
+Machine Learning Components:
+1. Thumb-Under Detection:
+   - Learns to identify thumb-under gestures from flex sensor data
+   - Uses logistic regression with pre-trigger flex readings
+   - Enables more sophisticated note transition modeling
+
+2. Transition Probability Matrix:
+   - Learns note transition patterns from finger movements
+   - Builds probabilistic models for next-note prediction
+   - Supports different feature modes (finger increments, finger pairs)
+
+3. Training Data Management:
+   - Handles data splitting for training/testing
+   - Manages multiple data files and cross-validation
+   - Provides accuracy metrics and confusion matrices
+
+Usage:
+    learner = Learn(includefile='training_files.txt', mode='bothinc')
+    data = learner.learn_transition_prob()
+    accuracy = learner.predict_transition_prob(data)
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 from data_analysis import ReadWrite, Stats, Analyze
 import numpy as np
 import os, csv, sys
 import itertools
-from debug_function import Logger
 from sklearn.linear_model import LogisticRegression
 import matplotlib.pyplot as plt
 from __init__ import learnDir, figDir

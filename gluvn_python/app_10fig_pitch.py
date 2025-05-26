@@ -1,4 +1,4 @@
-from gluvn_python.sens2note_temp import BaseApp
+from senstonote_modern import BaseApp
 
 import numpy as np
 # from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi

@@ -1,6 +1,6 @@
 from data_analysis import Analyze
 from __init__ import keyboard_portname, EXPDIR, simDir, learnDir, settingsDir, figDir, portL, portR, baud
-from run_glove import RunGlove
+from legacy.run_glove import RunGlove  # Legacy import - use modern apps instead
 from data_analysis import Analyze, Stats, Analyze2Hands
 from learning import Learn
 import numpy as np
@@ -171,7 +171,14 @@ def main():
     # gluvn.printAllSens(hands='both', printit=False, save=True, plot=True)
     # gluvn.printAllSens(hands='both', printit=True, save=False, plot=False)
     # gluvn.triggerIMU(['C3', 'D3', 'E3', 'F3', 'G3'], 20)
-    gluvn.twoHandInstrumentVib()
+    
+    # Legacy method commented out - use modern apps instead
+    # gluvn.twoHandInstrumentVib()
+    
+    print("Use modern apps instead:")
+    print("python app_10fig_inst.py")
+    print("python app_moving_window_accel.py") 
+    print("python app_harmonizer.py")
     #R.aiTrigger()
 
 if __name__ == '__main__':

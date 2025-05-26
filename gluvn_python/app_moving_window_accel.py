@@ -1,4 +1,4 @@
-from senstonote_new import BaseApp, MovingWindow
+from senstonote_modern import BaseApp, MovingWindow
 import numpy as np 
 
 

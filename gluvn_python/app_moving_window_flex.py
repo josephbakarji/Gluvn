@@ -1,4 +1,4 @@
-from gluvn_python.sens2note_temp import BaseApp, MovingWindow
+from senstonote_modern import BaseApp, MovingWindow
 import numpy as np 
 
 

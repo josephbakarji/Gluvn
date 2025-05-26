@@ -1,9 +1,46 @@
-'''
-Created on May 20, 2016
-Updated April 2024
+"""
+GLUVN Sensor-to-Note Processing Module (Modern Version)
 
-@author: josephbakarji
-'''
+This module contains the modern, unified sensor processing architecture for converting
+sensor data into MIDI note events. It provides robust, feature-complete implementations
+with comprehensive error handling and advanced functionality.
+
+Key Components:
+- SensorProcess: Thread that processes sensor data and applies trigger logic
+- BaseApp: Base class for all sensor-to-note applications  
+- MovingWindow: Advanced application with window-based note mapping
+- Harmonizer: Chord-based harmonization application
+
+Architecture:
+- Object-oriented design with inheritance
+- Configurable sensor types and thresholds
+- Modular trigger and modulation sensor handling
+- Support for both hands with different sensor configurations
+- Robust error handling and defensive programming
+
+Trigger Logic:
+- Hysteresis-based triggering to prevent false triggers
+- Configurable thresholds per sensor type
+- State tracking for note on/off events
+- Safe handling of missing sensors and data
+
+Advanced Features:
+- Volume control with accelerometer magnitude averaging
+- Pitch bending with IMU data
+- Window-based note selection
+- Debug mode support
+- Configuration system integration
+
+Applications inherit from BaseApp and implement specific sensor-to-note mappings:
+- Ten-finger instruments (each finger triggers a note)
+- Moving window scales (left hand selects note windows, right hand plays)
+- Acceleration-based volume control with averaging
+- Pitch bending with IMU orientation data
+
+Author: Joseph Bakarji
+Created: May 20, 2016
+Last Updated: April 2024
+"""
 
 import numpy as np
 from __init__ import settingsDir

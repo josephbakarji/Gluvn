@@ -1,3 +1,37 @@
+"""
+GLUVN Sensor Calibration Module
+
+This module provides sensor calibration functionality for the GLUVN sensor glove system.
+It guides users through calibration procedures and generates calibration constants
+for the Arduino firmware.
+
+Calibration Process:
+1. Open Hand Calibration:
+   - Records baseline values for flex sensors (straight fingers)
+   - Records baseline values for pressure sensors (no pressure)
+
+2. Closed Hand Calibration:
+   - Records maximum flex values (closed fist)
+
+3. Individual Finger Pressure Calibration:
+   - Records maximum pressure values for each finger individually
+
+Output:
+- Generates calibration.h file with MIN/MAX constants for Arduino
+- Automatically copies calibration file to Arduino project directory
+- Supports both left and right hand calibration
+
+The calibration constants are used by the Arduino firmware to normalize
+sensor readings to a 0-255 range for consistent processing.
+
+Usage:
+    python calibrate.py
+    # Follow interactive prompts for calibration procedure
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 from port_read import Reader
 from __init__ import portL, portR, baud, mainDir
 import time

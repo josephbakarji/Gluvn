@@ -120,7 +120,7 @@ class RunGlove:
 #####################################
 #####################################
 
-    # LEGACY METHODS COMMENTED OUT - Use modern senstonote_new.py BaseApp instead
+    # LEGACY METHODS COMMENTED OUT - Use modern senstonote_modern.py BaseApp instead
     # def simpleTrigger(self, notes, pressTrigThresh):
     #     sensThread = ReadSerial(portR, baud)
     #     parseThread = ParseSerial(sensThread.sensq, self.time0)

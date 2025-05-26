@@ -1,4 +1,6 @@
-from senstonote_new import BaseApp
+from senstonote_modern import BaseApp
+
+import numpy as np
 
 
 root_note = 'D'

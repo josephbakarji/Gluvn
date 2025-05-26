@@ -1,3 +1,31 @@
+"""
+GLUVN Port Reader Module
+
+This module handles serial communication with Arduino-based sensor gloves.
+It provides multi-threaded reading and parsing of sensor data from both hands.
+
+Key Components:
+- Reader: Main orchestrator class for sensor data acquisition
+- ReadSerial: Thread for reading raw serial data from Arduino
+- ParseSerial: Thread for parsing binary sensor data into structured format
+- ParseFile: Thread for reading sensor data from saved files (simulation mode)
+- ReadKeyboard: Thread for reading MIDI keyboard input
+- printSens: Thread for printing sensor data to console
+
+Data Flow:
+Arduino → Serial Port → ReadSerial → ParseSerial → Application
+
+The module supports:
+- Dual-hand operation (left/right gloves)
+- Configurable sensor types (flex, pressure, IMU)
+- Real-time data streaming
+- File-based simulation
+- Data recording and saving
+
+Author: Joseph Bakarji
+Last Updated: 2024
+"""
+
 from __future__ import division
 from __init__ import portL, portR, baud, simDir, EXPDIR, learnDir
 from data_analysis import ReadWrite
