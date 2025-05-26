@@ -1,7 +1,7 @@
 from __init__ import keyboard_portname, EXPDIR, testDir, settingsDir, figDir, portL, portR, baud
 from run_glove import RunGlove
 from data_analysis import Analyze, Stats, Analyze2Hands
-from learning import Learn
+from gluvn_python.legacy.learning import Learn
 import numpy as np
 import matplotlib.pyplot as plt
 import sys

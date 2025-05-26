@@ -1,7 +1,7 @@
 import numpy as np
 # from code.gluvn_python.midi_writer import TrigNote, TrigNote_midinum, signswitch2note, TriggerChordTest, make_C2midi
 from __init__ import settingsDir
-from learning import Learn
+from gluvn_python.legacy.learning import Learn
 from threading import Thread
 from collections import deque
 from mapper import NoteMapper

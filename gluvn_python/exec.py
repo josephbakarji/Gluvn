@@ -2,7 +2,7 @@ from data_analysis import Analyze
 from __init__ import keyboard_portname, EXPDIR, simDir, learnDir, settingsDir, figDir, portL, portR, baud
 from legacy.run_glove import RunGlove  # Legacy import - use modern apps instead
 from data_analysis import Analyze, Stats, Analyze2Hands
-from learning import Learn
+from gluvn_python.legacy.learning import Learn
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
