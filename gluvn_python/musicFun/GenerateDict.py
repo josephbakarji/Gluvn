@@ -51,8 +51,6 @@ for key, val in tupdict.items():
     w.writerow([key, val])
 
 
-
-
 dictest = {}
 for key, val in csv.reader(open("../data/tables/note2num.csv")):
     print(key)

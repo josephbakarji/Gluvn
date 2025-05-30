@@ -88,20 +88,39 @@ class NoteMapper:
         
         return midi_notes
     
-    def basic_map_2hands(self, first_note='C3'):
+    def basic_map_2hands(self, first_note=None):
+        
+        if first_note is None:
+            first_note = self.root_note + '3'
         
         first_note_midi = self.note2midi[first_note]
 
         # get index of idx_root_note in self.notes_in_scale
-        idx_root_note = self.notes_in_scale.index(first_note_midi)
-        if idx_root_note == -1:
-            raise ValueError(f"Note {first_note} not in scale {self.scale}")
+        try:
+            idx_root_note = self.notes_in_scale.index(first_note_midi)
+        except ValueError:
+            # If exact note not found, find the closest note in the scale
+            # This handles cases where the scale doesn't contain the exact octave
+            root_notes_all_octaves = []
+            for octave in range(0, 10):
+                try:
+                    root_notes_all_octaves.append(self.note2midi[self.root_note + str(octave)])
+                except KeyError:
+                    continue
+            
+            # Find the first root note in the scale
+            for root_midi in root_notes_all_octaves:
+                if root_midi in self.notes_in_scale:
+                    idx_root_note = self.notes_in_scale.index(root_midi)
+                    break
+            else:
+                raise ValueError(f"Root note {self.root_note} not found in scale {self.scale}")
 
         note_dict = {}
         note_dict['r'] = self.notes_in_scale[idx_root_note:idx_root_note+5]
         note_dict['l'] = self.notes_in_scale[idx_root_note-5:idx_root_note][::-1]
 
-        return note_dict 
+        return note_dict
 
     def basic_map(self, first_note='C3', num_notes=5):
         "Returns the the first num_notes notes after the first_note in midi format"
