@@ -1,207 +1,23 @@
 # GLUVN System Refactoring Implementation Plan
 
-## Phase 1: Core Architecture Refactoring
+## Phase 1: Core Architecture Refactoring ✅
 
-### Step 1: Create Strategy Pattern Base Classes
+### Step 1: Create Strategy Pattern Base Classes ✅
+- ✅ Created `core/strategies/` directory structure
+- ✅ Implemented base strategy classes in `core/strategies/base_strategies.py`
+- ✅ Implemented concrete trigger strategies in `core/strategies/trigger_strategies.py`
+- ✅ Implemented mapping strategies in `core/strategies/mapping_strategies.py`
 
-#### 1.1 Create `core/strategies/` directory structure
-```
-gluvn_python/core/
-├── __init__.py
-├── strategies/
-│   ├── __init__.py
-│   ├── base_strategies.py
-│   ├── trigger_strategies.py
-│   ├── mapping_strategies.py
-│   └── modulation_strategies.py
-```
+### Step 2: Visualization System Refactoring ✅ COMPLETED
+- ✅ Created `visualization/` directory for PyQt components
+- ✅ Implemented `FingerSensorWidget` as reusable component in `visualization/finger_widgets.py`
+- ✅ Implemented `TenFingerDisplay` for complete hands visualization
+- ✅ Implemented `SensorProcessingThread` in `visualization/sensor_threads.py`
+- ✅ Integrated visualization components with GLUVN trigger strategies
+- ✅ Updated GUI example to use clean architecture
+- ✅ Tested complete system - all components working correctly
 
-#### 1.2 Base Strategy Classes (`core/strategies/base_strategies.py`)
-```python
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
-import numpy as np
-
-class TriggerStrategy(ABC):
-    """Base class for trigger logic implementations"""
-    
-    @abstractmethod
-    def process_triggers(self, sensor_data: Dict[str, Any], hand: str) -> np.ndarray:
-        """Process sensor data and return trigger events"""
-        pass
-    
-    @abstractmethod
-    def get_trigger_state(self, hand: str) -> np.ndarray:
-        """Get current trigger state for hand"""
-        pass
-
-class MappingStrategy(ABC):
-    """Base class for sensor-to-note mapping strategies"""
-    
-    @abstractmethod
-    def map_to_notes(self, trigger_events: np.ndarray, hand: str, **kwargs) -> List[int]:
-        """Map trigger events to MIDI note numbers"""
-        pass
-    
-    @abstractmethod
-    def update_mapping(self, **kwargs) -> None:
-        """Update mapping parameters"""
-        pass
-
-class ModulationStrategy(ABC):
-    """Base class for continuous control strategies"""
-    
-    @abstractmethod
-    def process_modulation(self, sensor_data: Dict[str, Any], hand: str) -> Dict[str, float]:
-        """Process sensor data for continuous controls"""
-        pass
-```
-
-#### 1.3 Concrete Strategy Implementations
-
-**Trigger Strategies** (`core/strategies/trigger_strategies.py`)
-```python
-class HysteresisTrigger(TriggerStrategy):
-    """Hysteresis-based triggering with configurable thresholds"""
-    
-    def __init__(self, thresholds: Dict[str, float], hysteresis: Dict[str, float]):
-        self.thresholds = thresholds
-        self.hysteresis = hysteresis
-        self.trigger_states = {'l': np.zeros(5, dtype=bool), 'r': np.zeros(5, dtype=bool)}
-        self.trig_on = {'l': np.zeros(5, dtype=bool), 'r': np.zeros(5, dtype=bool)}
-        self.trig_off = {'l': np.zeros(5, dtype=bool), 'r': np.zeros(5, dtype=bool)}
-
-class MultiSensorTrigger(TriggerStrategy):
-    """Trigger based on multiple sensor fusion"""
-    
-class IMUDirectionalTrigger(TriggerStrategy):
-    """IMU-based directional triggering (Jacob Choir style)"""
-```
-
-**Mapping Strategies** (`core/strategies/mapping_strategies.py`)
-```python
-class BasicMapper(MappingStrategy):
-    """Simple finger-to-note mapping"""
-    
-    def __init__(self, note_mapper):
-        self.note_mapper = note_mapper
-        self.note_maps = note_mapper.basic_map_2hands()
-
-class WindowMapper(MappingStrategy):
-    """Moving window note selection"""
-    
-    def __init__(self, note_mapper, num_lh_fingers=5, num_rh_fingers=5):
-        self.note_mapper = note_mapper
-        self.window_trigger, self.note_windows = note_mapper.moving_window(
-            num_lhf=num_lh_fingers, num_rhf=num_rh_fingers
-        )
-        self.current_window = None
-
-class ChordMapper(MappingStrategy):
-    """Chord-based harmonization mapping"""
-
-class DirectionalMapper(MappingStrategy):
-    """IMU-based directional note control"""
-```
-
-**Modulation Strategies** (`core/strategies/modulation_strategies.py`)
-```python
-class VolumeModulation(ModulationStrategy):
-    """Volume control strategies"""
-    
-class AccelVolumeModulation(VolumeModulation):
-    """Accelerometer-based volume control"""
-    
-class PitchBendModulation(ModulationStrategy):
-    """Pitch bend control strategies"""
-    
-class IMUPitchBend(PitchBendModulation):
-    """IMU-based pitch bending"""
-```
-
-### Step 2: Unified Application Framework
-
-#### 2.1 Core Application Class (`core/app_framework.py`)
-```python
-from typing import Optional, Dict, Any
-from .strategies.base_strategies import TriggerStrategy, MappingStrategy, ModulationStrategy
-from configs.base_config import BaseConfig
-from mapper import NoteMapper
-from port_read import Reader
-from midi_writer import MidiWriter
-import queue
-from threading import Thread
-
-class GluvnApp(Thread):
-    """Unified application framework for all GLUVN applications"""
-    
-    def __init__(self, config: BaseConfig):
-        super().__init__()
-        self.daemon = True
-        self.config = config
-        
-        # Initialize core components
-        self.reader = Reader(sensor_config=config.sensor_config)
-        self.note_mapper = NoteMapper(root_note=config.root_note, scale=config.scale)
-        self.midi_writer = MidiWriter()
-        self.collect_q = queue.Queue(maxsize=20)
-        
-        # Initialize strategies
-        self.trigger_strategy = self._create_trigger_strategy()
-        self.mapping_strategy = self._create_mapping_strategy()
-        self.modulation_strategy = self._create_modulation_strategy()
-        
-        # Initialize sensor processors
-        self.sensor_processors = {}
-        self._initialize_sensor_processors()
-    
-    def _create_trigger_strategy(self) -> TriggerStrategy:
-        """Factory method to create trigger strategy from config"""
-        # Implementation based on config.trigger_type
-        pass
-    
-    def _create_mapping_strategy(self) -> MappingStrategy:
-        """Factory method to create mapping strategy from config"""
-        # Implementation based on config.mapping_type
-        pass
-    
-    def _create_modulation_strategy(self) -> Optional[ModulationStrategy]:
-        """Factory method to create modulation strategy from config"""
-        # Implementation based on config.modulation_type
-        pass
-    
-    def run(self):
-        """Main application loop"""
-        self.reader.start_readers()
-        
-        while True:
-            sensor_data = self.collect_q.get(block=True)
-            hand = sensor_data.get('hand')
-            
-            # Process triggers
-            trigger_events = self.trigger_strategy.process_triggers(sensor_data, hand)
-            
-            # Map to notes
-            if np.any(trigger_events):
-                notes = self.mapping_strategy.map_to_notes(trigger_events, hand)
-                for note in notes:
-                    if note is not None:
-                        self.midi_writer.trig_note(note)
-            
-            # Process modulation
-            if self.modulation_strategy:
-                modulation = self.modulation_strategy.process_modulation(sensor_data, hand)
-                self._apply_modulation(modulation)
-    
-    def _apply_modulation(self, modulation: Dict[str, float]):
-        """Apply modulation controls to MIDI output"""
-        if 'volume' in modulation:
-            self.midi_writer.aftertouch(int(modulation['volume']))
-        if 'pitch_bend' in modulation:
-            self.midi_writer.pitch_bend(int(modulation['pitch_bend']))
-```
-
-### Step 3: Enhanced Configuration System
+### Step 3: Enhanced Configuration System (IN PROGRESS)
 
 #### 3.1 Extended Base Configuration (`configs/base_config.py`)
 ```python
