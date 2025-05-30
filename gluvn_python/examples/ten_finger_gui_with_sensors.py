@@ -25,7 +25,7 @@ import os
 # PyQt5 imports
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QGroupBox, QSpinBox, QComboBox, 
-                            QPushButton, QLabel, QStatusBar, QMessageBox)
+                            QPushButton, QLabel, QStatusBar, QMessageBox, QCheckBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
@@ -65,6 +65,9 @@ class TenFingerSensorGUI(QMainWindow):
         self.threshold = 120
         self.hysteresis = 10
         self.sensor_type = 'flex'
+        
+        # Debug settings
+        self.debug_printing = False
         
         # Initialize MIDI and mapping
         self._initialize_midi_system()
@@ -213,7 +216,15 @@ class TenFingerSensorGUI(QMainWindow):
         self.sensor_combo.currentTextChanged.connect(self.update_sensor_type)
         row2.addWidget(self.sensor_combo)
         
+        # Row 3: Debug printing
+        row3 = QHBoxLayout()
+        self.debug_checkbox = QCheckBox("Enable Debug Printing")
+        self.debug_checkbox.setChecked(self.debug_printing)
+        self.debug_checkbox.stateChanged.connect(self.toggle_debug_printing)
+        row3.addWidget(self.debug_checkbox)
+        
         config_layout.addLayout(row2)
+        config_layout.addLayout(row3)
         control_layout.addLayout(config_layout)
     
     def start_sensors(self):
@@ -232,7 +243,7 @@ class TenFingerSensorGUI(QMainWindow):
             
             # Initialize sensor processing thread with proper strategy
             self.sensor_thread = SensorProcessingThread(
-                self.reader, trigger_config, self.sensor_type
+                self.reader, trigger_config, self.sensor_type, None, self.debug_printing
             )
             self.sensor_thread.sensor_update.connect(self.on_sensor_update)
             self.sensor_thread.error_signal.connect(self.on_error)
@@ -272,15 +283,18 @@ class TenFingerSensorGUI(QMainWindow):
                 if switch_event == 1:
                     # Turn note ON
                     self.midi_writer.trig_note(note, vel=80)
-                    print(f"🎵 MIDI ON: {hand.upper()} finger {finger_idx}, note {note}")
+                    if self.debug_printing:
+                        print(f"🎵 MIDI ON: {hand.upper()} finger {finger_idx}, note {note}")
                 elif switch_event == -1:
                     # Turn note OFF  
                     self.midi_writer.trig_note(note, vel=0)
-                    print(f"🎵 MIDI OFF: {hand.upper()} finger {finger_idx}, note {note}")
+                    if self.debug_printing:
+                        print(f"🎵 MIDI OFF: {hand.upper()} finger {finger_idx}, note {note}")
     
     def on_error(self, error_message):
         """Handle errors from sensor thread"""
-        print(f"❌ Sensor error: {error_message}")
+        if self.debug_printing:
+            print(f"❌ Sensor error: {error_message}")
         self.status_bar.showMessage(f"Error: {error_message}")
     
     def update_threshold(self, value):
@@ -301,6 +315,10 @@ class TenFingerSensorGUI(QMainWindow):
         """Update sensor type"""
         self.sensor_type = sensor_type
         self.status_bar.showMessage(f"🔄 Sensor type changed to {sensor_type} - Restart sensors to apply")
+    
+    def toggle_debug_printing(self, state):
+        """Toggle debug printing"""
+        self.debug_printing = state == Qt.Checked
     
     def closeEvent(self, event):
         """Handle application close"""
