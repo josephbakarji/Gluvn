@@ -9,8 +9,8 @@ import queue
 
 class SensorPlotter(QMainWindow):
     # === USER-CONTROLLED PARAMETERS ===
-    LINE_WIDTH = 3  # Line width for all plots
-    POINTS_SKIP = 4  # Number of points to skip (downsampling factor)
+    LINE_WIDTH = 4  # Line width for all plots
+    POINTS_SKIP = 1  # Number of points to skip (downsampling factor)
     MAX_POINTS = 1000  # Buffer size
     # Colors for each channel (can be changed by user)
     FLEX_COLORS = [(255,0,0), (0,255,0), (0,0,255), (255,255,0), (0,255,255)]

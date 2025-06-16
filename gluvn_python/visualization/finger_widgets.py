@@ -165,6 +165,26 @@ class FingerSensorWidget(QWidget):
         """Update the note name"""
         self.note_name = note_name
         self.note_label.setText(note_name)
+    
+    def set_sensor_type(self, sensor_type):
+        """Update the sensor type and adjust sensor bar range"""
+        self.sensor_type = sensor_type
+        
+        # Update sensor bar range based on sensor type
+        if self.sensor_type == "flex":
+            self.sensor_bar.setRange(0, 255)
+        else:  # press
+            self.sensor_bar.setRange(0, 1023)
+        
+        # Update the sensor group label
+        if hasattr(self, 'sensor_group'):
+            self.sensor_group.setTitle(f"{self.sensor_type.upper()} Sensor")
+        
+        # Update the progress bar styling
+        self._update_progress_bar_style()
+        
+        # Trigger repaint for threshold line with new range
+        self.update()
 
 
 class TenFingerDisplay(QWidget):
@@ -251,6 +271,15 @@ class TenFingerDisplay(QWidget):
                         else:
                             note_name = str(note_value)
                         widget.update_note(note_name)
+    
+    def set_sensor_type(self, sensor_type):
+        """Update sensor type for all finger widgets"""
+        self.sensor_type = sensor_type
+        
+        # Update sensor type for all existing finger widgets
+        for hand in ['l', 'r']:
+            for widget in self.finger_widgets[hand]:
+                widget.set_sensor_type(sensor_type)
 
 
 class EnhancedFingerSensorWidget(QWidget):

@@ -42,6 +42,9 @@ from __init__ import IACDriver
 import os,sys,inspect
 current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 
+import threading
+import queue
+
 class MidiWriter:
     def __init__(self):
         self.rtmidi = mido.Backend('mido.backends.rtmidi')
@@ -155,3 +158,30 @@ class MidiWriter:
     #         temp = None
         
     #     return temp
+
+class MidiWriterThread(threading.Thread):
+    def __init__(self, midi_writer):
+        super().__init__()
+        self.midi_writer = midi_writer
+        self.msg_queue = queue.Queue()
+        self.running = True
+
+    def run(self):
+        while self.running:
+            try:
+                msg = self.msg_queue.get(timeout=0.1)
+                self._send_midi(msg)
+            except queue.Empty:
+                continue
+
+    def _send_midi(self, msg):
+        # msg is a tuple: (method, args, kwargs)
+        method, args, kwargs = msg
+        if hasattr(self.midi_writer, method):
+            getattr(self.midi_writer, method)(*args, **kwargs)
+
+    def send(self, method, *args, **kwargs):
+        self.msg_queue.put((method, args, kwargs))
+
+    def stop(self):
+        self.running = False

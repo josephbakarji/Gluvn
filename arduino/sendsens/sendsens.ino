@@ -26,7 +26,7 @@
 
 int ret;
 
-char hand = 'r'; // Choose either 'r' or 'l'
+char hand = 'l'; // Choose either 'r' or 'l'
 int use_gyro = false;
 bool calibration_mode = false; // Can be controlled via serial commands
 bool write_serial = true; 
@@ -36,7 +36,7 @@ bool write_serial = true;
 // print_mode = 2 -> prints calibrated values
 int print_mode = 0;
 
-const long interval = 4;  // Interval at which to read sensors and send data (milliseconds)
+const long interval = 20;  // Interval at which to read sensors and send data (milliseconds)
 
 int gyro_max = 2000; // Range is +/- 2000 deg/s by default 
 int accel_max = 32767.0; // Range is +/- 2g by default

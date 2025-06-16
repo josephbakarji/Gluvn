@@ -487,3 +487,15 @@ playback capabilities)
 - Incorporating VMO for improvising with the gluvn!
 - Simulating percussion
 
+## Pitch Bend Mapping Reference
+
+The pitch bend value is derived from the IMU2 (pitch) sensor, which is mapped on the Arduino as follows:
+
+- Arduino: `pitch_cal = (pitch + 90) * 32767 / 90`  (so pitch in [-90, 90] maps to [0, 65535])
+
+In the GUI, the pitch bend value is mapped to the MIDI range [-8192, 8192] using:
+
+- `pitch_bend = (imu2 / 65535.0) * 16384 - 8192`
+
+This ensures the pitch bend in the GUI matches the physical sensor mapping from the Arduino firmware.
+

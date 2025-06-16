@@ -8,6 +8,8 @@ Components:
 - FingerSensorWidget: Individual finger sensor display with real-time values
 - SensorProcessingThread: Thread for real-time sensor data processing
 - TenFingerDisplay: Complete ten-finger hand display widget
+- PianoKeyboard: Piano keyboard display with note triggering visualization
+- CompactPianoKeyboard: Compact piano keyboard for tight layouts
 
 Modulation Strategies (re-exported for convenience):
 - AccelVolumeModulation: Accelerometer-based volume control
@@ -20,6 +22,7 @@ Author: Joseph Bakarji
 
 from .finger_widgets import FingerSensorWidget, TenFingerDisplay, EnhancedFingerSensorWidget, EnhancedTenFingerDisplay
 from .sensor_threads import SensorProcessingThread
+from .piano_keyboard import PianoKeyboard, CompactPianoKeyboard, PianoKey
 
 # Re-export modulation strategies for convenient access
 import sys
@@ -40,6 +43,9 @@ __all__ = [
     'EnhancedFingerSensorWidget',
     'EnhancedTenFingerDisplay',
     'SensorProcessingThread',
+    'PianoKeyboard',
+    'CompactPianoKeyboard',
+    'PianoKey',
     'AccelVolumeModulation',
     'IMUPitchBendModulation', 
     'MovingWindowModulation',
