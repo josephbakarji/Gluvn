@@ -30,7 +30,7 @@ import math
 # PyQt5 imports
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QGroupBox, QSpinBox, QComboBox, 
-                            QPushButton, QLabel, QStatusBar, QMessageBox, QCheckBox, QInputDialog, QSlider, QSizePolicy)
+                            QPushButton, QLabel, QStatusBar, QMessageBox, QCheckBox, QInputDialog, QSlider, QSizePolicy, QProgressBar)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 
@@ -228,28 +228,32 @@ class TenFingerPitchBendGUI(QMainWindow):
         self._initialize_midi_system()
         # Initialize hardware
         self._initialize_hardware()
-        # Setup UI
-        self.pitch_bend_imu_channel = 1  # Default to IMU2 (index 1)
-        self.volume_control_hand = 'r'   # Default to right hand
+        # Setup UI-related state
+        self.pitch_bend_imu_channel = 2  # Use Roll by default (IMU2 (Roll) in combo)
+        self.volume_control_hand = 'r'
         self.last_volume_update = 0
-        self.midi_update_interval = 0.05  # 50ms throttle for MIDI CC
-        self.base_volume = 10  # Minimum volume
-        self.avg_window = 10    # Default moving average window size
+        self.midi_update_interval = 0.01  # faster PB updates
+        self.base_volume = 10
+        self.avg_window = 10
         self.max_avg_window = 100
         self.accel_mag_buffers = {'l': [0]*self.max_avg_window, 'r': [0]*self.max_avg_window}
         self.buffer_index = {'l': 0, 'r': 0}
-        self.fixed_window_size = self.avg_window
         self.TWO_BYTE = 65535
         self.ZERO_ACCEL = self.TWO_BYTE / 4.0 - 680.0
-        self.sensitivity = 1.0  # Default sensitivity for accel->volume
-        self.plot_mode = 'imu_vs_imu'  # Default plot mode
+        self.sensitivity = 1.0
+        # Pitch bend visual/smoothing
+        self.pb_window = 2  # snappier default
+        self.pb_vals = deque(maxlen=100)
+        self.pb_sensitivity = 1.0  # scale roll response (less sensitive by default)
+        self.pb_flip = True        # flip so palm-down is neutral by default
+        self.pb_span_deg = 45.0    # degrees that map to full-scale bend before sensitivity
+        self.plot_mode = 'imu_vs_imu'
+        # Build UI
         self._setup_ui()
         self.status_bar = QStatusBar()
         self.status_bar.showMessage("Ready - Click 'Start Sensors' to begin")
         self.setStatusBar(self.status_bar)
-        self.plot_timer = QTimer()
-        self.plot_timer.timeout.connect(self._update_plot)
-        self.plot_timer.start(33)  # ~30 Hz update rate
+        # Optional plot timer removed; plotting is driven by sensor updates
     def _initialize_midi_system(self):
         try:
             self.midi_writer = MidiWriter()
@@ -381,6 +385,31 @@ class TenFingerPitchBendGUI(QMainWindow):
         display_layout = QVBoxLayout(display_group)
         display_layout.addWidget(self.finger_display)
         main_layout.addWidget(display_group)
+        # Pitch bend indicator (below finger display)
+        pb_group = QGroupBox("Pitch Bend")
+        pb_layout = QHBoxLayout(pb_group)
+        self.pb_label = QLabel("0 st")
+        self.pb_bar = QProgressBar()
+        self.pb_bar.setRange(-8192, 8191)
+        self.pb_bar.setValue(0)
+        self.pb_bar.setTextVisible(False)
+        # PB controls (sensitivity + flip)
+        self.pb_sens_slider = QSlider(Qt.Horizontal)
+        self.pb_sens_slider.setMinimum(50)   # 0.5x
+        self.pb_sens_slider.setMaximum(300)  # 3.0x
+        self.pb_sens_slider.setValue(int(self.pb_sensitivity*100))
+        self.pb_sens_slider.setFixedWidth(120)
+        self.pb_sens_slider.valueChanged.connect(self._on_pb_sens_changed)
+        self.pb_flip_checkbox = QCheckBox("Flip")
+        self.pb_flip_checkbox.setChecked(self.pb_flip)
+        self.pb_flip_checkbox.stateChanged.connect(self._on_pb_flip_changed)
+        pb_layout.addWidget(QLabel("Bend:"))
+        pb_layout.addWidget(self.pb_bar, 1)
+        pb_layout.addWidget(self.pb_label)
+        pb_layout.addWidget(QLabel("Sens:"))
+        pb_layout.addWidget(self.pb_sens_slider)
+        pb_layout.addWidget(self.pb_flip_checkbox)
+        main_layout.addWidget(pb_group)
         # Add IMU plot
         self.imu_plot = IMUPlotWidget(max_points=500, plot_mode=self.plot_mode, parent_gui=self)
         main_layout.addWidget(self.imu_plot)
@@ -432,10 +461,15 @@ class TenFingerPitchBendGUI(QMainWindow):
             if hand in self.note_maps and finger_idx < len(self.note_maps[hand]):
                 note = self.note_maps[hand][finger_idx]
                 if switch_event == 1:
-                    self.midi_writer.trig_note(note, vel=80)
+                    # Use lower velocity for smoother attack
+                    self.midi_writer.trig_note(note, vel=60)
                     if self.debug_printing:
                         print(f"🎵 MIDI ON: {hand.upper()} finger {finger_idx}, note {note}")
                 elif switch_event == -1:
+                    # Use velocity 64 instead of 0 for smoother release
+                    # self.midi_writer.trig_note(note, vel=64)
+                    # Small delay before sending note off
+                    time.sleep(0.001)  # 1ms delay
                     self.midi_writer.trig_note(note, vel=0)
                     if self.debug_printing:
                         print(f"🎵 MIDI OFF: {hand.upper()} finger {finger_idx}, note {note}")
@@ -444,14 +478,38 @@ class TenFingerPitchBendGUI(QMainWindow):
         if 'imu' in raw_sensor_dict:
             self.imu_plot.update_plot(hand, raw_sensor_dict['imu'], zero_accel=self.ZERO_ACCEL, baseline_subtract=self.BASELINE_SUBTRACT)
         
-        # Pitch bend (right hand only)
-        if hand == 'r' and 'imu' in raw_sensor_dict:
+        # Pitch bend: use selected IMU channel (expect roll at index 2)
+        if hand == 'r' and 'imu' in raw_sensor_dict and self.midi_available and self.midi_writer:
             imu = raw_sensor_dict['imu']
             if len(imu) > self.pitch_bend_imu_channel:
-                pitch_val = imu[self.pitch_bend_imu_channel]
-                # Map 0-65535 to -8192 to 8192
-                pitch_bend = int((pitch_val / 65535.0) * 16384 - 8192)
-                self.midi_writer.pitch_bend(pitch_bend)
+                raw_val = float(imu[self.pitch_bend_imu_channel])  # 0..65535
+                # Map IMU roll channel raw (0..65535) -> angle 0..360
+                angle_deg = (raw_val / 65535.0) * 360.0
+                # Circular shortest signed difference to neutral 0° in [-180,180)
+                delta_deg = ((angle_deg + 180.0) % 360.0) - 180.0
+                # Optional flip only inverts direction, does NOT change neutral
+                if self.pb_flip:
+                    delta_deg = -delta_deg
+                # Normalize to [-1,1] using span degrees, then smooth
+                norm = max(min(delta_deg / max(self.pb_span_deg, 1e-3), 1.0), -1.0)
+                self.pb_vals.append(norm)
+                win = min(self.pb_window, len(self.pb_vals))
+                smoothed = sum(list(self.pb_vals)[-win:]) / max(win, 1)
+                # Sensitivity scaling
+                scaled = max(min(smoothed * self.pb_sensitivity, 1.0), -1.0)
+                # Map to MIDI PB units (assumes synth PB range set to +/- 2 semitones ~ full note)
+                pb_units = int(scaled * 8191)
+                # Throttle and send
+                now = time.time()
+                if now - getattr(self, 'last_pitch_update', 0) >= self.midi_update_interval:
+                    self.midi_writer.pitch_bend(pb_units)
+                    self.last_pitch_update = now
+                # Update indicator (also show approx semitone bend with +/-2 range)
+                self.pb_bar.setValue(pb_units)
+                approx_semitones = scaled * 2.0  # +/- 2 semitones
+                self.pb_label.setText(f"{approx_semitones:+.2f} st")
+                if self.print_checkbox.isChecked():
+                    print(f"[PB] raw:{raw_val:.0f} ang:{angle_deg:6.2f} d:{delta_deg:+6.2f} norm:{norm:+.3f} sm:{smoothed:+.3f} sc:{scaled:+.3f} pb:{pb_units:+d} st:{approx_semitones:+.2f}")
         # Volume control (selected hand, moving average of accel magnitude, window size adjustable)
         if hand == self.volume_control_hand and 'imu' in raw_sensor_dict:
             imu = raw_sensor_dict['imu']
@@ -535,6 +593,10 @@ class TenFingerPitchBendGUI(QMainWindow):
     def _on_plot_mode_changed(self, index):
         self.plot_mode = 'imu_vs_imu' if index == 0 else 'imu_vs_volume'
         self.imu_plot.set_plot_mode(self.plot_mode)
+    def _on_pb_sens_changed(self, val):
+        self.pb_sensitivity = max(0.1, val/100.0)
+    def _on_pb_flip_changed(self, state):
+        self.pb_flip = (state == Qt.Checked)
     def _update_plot(self):
         # Remove this method as it's causing errors and not needed
         # The plot updates are handled by on_raw_sensor_update
