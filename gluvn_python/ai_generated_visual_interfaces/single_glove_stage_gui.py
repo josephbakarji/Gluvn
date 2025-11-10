@@ -214,7 +214,12 @@ class SingleGloveStageGUI(QMainWindow):
         grid.addWidget(QLabel('Sensor'), 0, 0)
         grid.addWidget(QLabel('Type'), 0, 1)
         grid.addWidget(QLabel('Value'), 0, 2)
-        self.flex_type = []; self.flex_val = []
+        grid.addWidget(QLabel('Solo'), 0, 3)
+        
+        # Solo state tracking
+        self.solo_states = {'flex': [False] * FLEX_COUNT, 'press': [False] * PRESS_COUNT, 'imu': {'yaw': False, 'pitch': False, 'roll': False}}
+        
+        self.flex_type = []; self.flex_val = []; self.flex_solo = []
         for i in range(FLEX_COUNT):
             grid.addWidget(QLabel(f'Flex {i+1}'), i+1, 0)
             t = QComboBox(); t.addItems(['CC', 'Note'])
@@ -222,10 +227,15 @@ class SingleGloveStageGUI(QMainWindow):
             # defaults: CC 1..5
             t.setCurrentIndex(0)
             v.setCurrentText(str(i+1))
-            self.flex_type.append(t); self.flex_val.append(v)
-            grid.addWidget(t, i+1, 1); grid.addWidget(v, i+1, 2)
+            # Solo button
+            solo_btn = QPushButton('Solo')
+            solo_btn.setCheckable(True)
+            solo_btn.setMaximumWidth(60)
+            solo_btn.clicked.connect(lambda checked, idx=i: self._toggle_solo('flex', idx, checked))
+            self.flex_type.append(t); self.flex_val.append(v); self.flex_solo.append(solo_btn)
+            grid.addWidget(t, i+1, 1); grid.addWidget(v, i+1, 2); grid.addWidget(solo_btn, i+1, 3)
         base = 1 + FLEX_COUNT
-        self.press_type = []; self.press_val = []
+        self.press_type = []; self.press_val = []; self.press_solo = []
         for i in range(PRESS_COUNT):
             grid.addWidget(QLabel(f'Press {i+1}'), base+i, 0)
             t = QComboBox(); t.addItems(['CC', 'Note'])
@@ -233,8 +243,13 @@ class SingleGloveStageGUI(QMainWindow):
             # defaults: Notes 60..64
             t.setCurrentIndex(1)
             v.setCurrentText(str(60+i))
-            self.press_type.append(t); self.press_val.append(v)
-            grid.addWidget(t, base+i, 1); grid.addWidget(v, base+i, 2)
+            # Solo button
+            solo_btn = QPushButton('Solo')
+            solo_btn.setCheckable(True)
+            solo_btn.setMaximumWidth(60)
+            solo_btn.clicked.connect(lambda checked, idx=i: self._toggle_solo('press', idx, checked))
+            self.press_type.append(t); self.press_val.append(v); self.press_solo.append(solo_btn)
+            grid.addWidget(t, base+i, 1); grid.addWidget(v, base+i, 2); grid.addWidget(solo_btn, base+i, 3)
         # Real-time sensor indicators (right hand only) side-by-side with mapping
         top_row = QHBoxLayout()
         # Flex indicators (right hand only)
@@ -250,18 +265,26 @@ class SingleGloveStageGUI(QMainWindow):
         imu_group = QGroupBox('IMU CC Mapping (Yaw/Pitch/Roll)')
         imu_layout = QVBoxLayout(imu_group)
         
-        # Top row: CC selection dropdowns
+        # Top row: CC selection dropdowns and solo buttons
         imu_row = QHBoxLayout()
         self.imu_cc_boxes = {}
+        self.imu_solo_buttons = {}
         # Default CC values: Yaw=50, Pitch=51, Roll=52
         default_ccs = {'yaw': 50, 'pitch': 51, 'roll': 52}
         for name in ['Yaw', 'Pitch', 'Roll']:
+            # CC dropdown
             box = QComboBox(); box.addItem('None')
             for n in range(128): box.addItem(str(n))
             # Set default CC value
             default_cc = default_ccs[name.lower()]
             box.setCurrentText(str(default_cc))
-            imu_row.addWidget(QLabel(name)); imu_row.addWidget(box)
+            # Solo button
+            solo_btn = QPushButton('Solo')
+            solo_btn.setCheckable(True)
+            solo_btn.setMaximumWidth(60)
+            solo_btn.clicked.connect(lambda checked, axis=name.lower(): self._toggle_solo('imu', axis, checked))
+            self.imu_solo_buttons[name.lower()] = solo_btn
+            imu_row.addWidget(QLabel(name)); imu_row.addWidget(box); imu_row.addWidget(solo_btn)
             self.imu_cc_boxes[name.lower()] = box
         imu_layout.addLayout(imu_row)
         
@@ -422,6 +445,61 @@ class SingleGloveStageGUI(QMainWindow):
         else:
             print("No MIDI writer available")
 
+    def _toggle_solo(self, sensor_type, index, checked):
+        """Toggle solo state for a sensor"""
+        if sensor_type == 'imu':
+            # For IMU, index is the axis name (yaw, pitch, roll)
+            self.solo_states['imu'][index] = checked
+            # Update button appearance
+            if index in self.imu_solo_buttons:
+                btn = self.imu_solo_buttons[index]
+                btn.setStyleSheet("QPushButton:checked { background-color: #ff6b6b; }" if checked else "")
+        else:
+            # For flex/press, index is the sensor number
+            self.solo_states[sensor_type][index] = checked
+            # Update button appearance
+            solo_buttons = self.flex_solo if sensor_type == 'flex' else self.press_solo
+            if index < len(solo_buttons):
+                btn = solo_buttons[index]
+                btn.setStyleSheet("QPushButton:checked { background-color: #ff6b6b; }" if checked else "")
+        
+        # Turn off all other solo buttons in the same category
+        if checked:
+            if sensor_type == 'imu':
+                for axis, btn in self.imu_solo_buttons.items():
+                    if axis != index:
+                        btn.setChecked(False)
+                        btn.setStyleSheet("")
+                        self.solo_states['imu'][axis] = False
+            else:
+                solo_buttons = self.flex_solo if sensor_type == 'flex' else self.press_solo
+                for i, btn in enumerate(solo_buttons):
+                    if i != index:
+                        btn.setChecked(False)
+                        btn.setStyleSheet("")
+                        self.solo_states[sensor_type][i] = False
+        
+        print(f"Solo {sensor_type} {index}: {'ON' if checked else 'OFF'}")
+
+    def _is_solo_active(self, sensor_type, index):
+        """Check if any solo is active for this sensor type"""
+        if sensor_type == 'imu':
+            return any(self.solo_states['imu'].values())
+        else:
+            return any(self.solo_states[sensor_type])
+    
+    def _should_send_midi(self, sensor_type, index):
+        """Check if MIDI should be sent for this sensor (respects solo state)"""
+        if not self._is_solo_active(sensor_type, index):
+            # No solo active, send all
+            return True
+        
+        # Solo is active, only send if this sensor is soloed
+        if sensor_type == 'imu':
+            return self.solo_states['imu'].get(index, False)
+        else:
+            return self.solo_states[sensor_type][index]
+
     def start(self):
         if self.running: return
         
@@ -512,8 +590,10 @@ class SingleGloveStageGUI(QMainWindow):
         if not self.midi_writer:
             return
         
-        # Send MIDI messages based on sensor type and finger index
+        # Send MIDI messages based on sensor type and finger index (respect solo state)
         if sensor_type == 'flex' and finger_idx < FLEX_COUNT:
+            if not self._should_send_midi('flex', finger_idx):
+                return  # Skip if not soloed
             t = self.flex_type[finger_idx].currentText()
             val = int(self.flex_val[finger_idx].currentText())
             if t == 'CC':
@@ -531,6 +611,8 @@ class SingleGloveStageGUI(QMainWindow):
                         print(f"Flex {finger_idx}: Note OFF {val}")
         
         elif sensor_type == 'press' and finger_idx < PRESS_COUNT:
+            if not self._should_send_midi('press', finger_idx):
+                return  # Skip if not soloed
             t = self.press_type[finger_idx].currentText()
             val = int(self.press_val[finger_idx].currentText())
             if t == 'CC':
@@ -573,7 +655,8 @@ class SingleGloveStageGUI(QMainWindow):
                     self.imu_indicators[name]['label'].setText(str(cc_val))
                     self.imu_indicators[name]['bar'].setValue(cc_val)
                 
-                if self.midi_writer and (now - self.imu_cc_last[name]) >= self.imu_cc_interval:
+                # Check solo state for IMU
+                if self._should_send_midi('imu', name) and self.midi_writer and (now - self.imu_cc_last[name]) >= self.imu_cc_interval:
                     self.midi_writer.control_change(cc_val, cc_num)
                     self.imu_cc_last[name] = now
                     if self.print_enabled:
