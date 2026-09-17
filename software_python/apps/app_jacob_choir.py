@@ -1,7 +1,7 @@
 """
 app_jacob_choir.py — three-note choir instrument.
 
-Trigger topology (per hand, multi-sensor via MultiSensorProcess):
+Trigger topology ( multi-sensor via MultiSensorProcess):
   - lin_accel burst  -> retrigger up to 3 notes (yaw-sector selected, per hand)
   - pitch tilt       -> step the sounding note up/down within the scale
   - press 5         -> all-notes-off
