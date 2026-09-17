@@ -1,0 +1,37 @@
+{
+    "root_note": "C",
+    "scale": "major",
+    "trigger_sensors": {
+        "l": "flex",
+        "r": "flex"
+    },
+    "thresholds": {
+        "flex": 180,
+        "press": 15
+    },
+    "hysteresis": {
+        "flex": 5,
+        "press": 5
+    },
+    "mod_sensors": {
+        "r": ["imu", "imu"],
+        "l": ["flex", "flex"]
+    },
+    "mod_idx": {
+        "r": [3, 4],
+        "l": [0, 1]
+    },
+    "volume_controller": "imu3",
+    "pitch_bender": "imu4",
+    "averaging_window_controller": null,
+    "averaging_window_size": 5,
+    "base_volume": 30,
+    "instrument": "ten_finger",
+    "num_lh_fingers": 5,
+    "num_rh_fingers": 5,
+    "hands": ["l", "r"],
+    "sensor_config": {
+        "l": {"flex": true, "press": false, "imu": false},
+        "r": {"flex": true, "press": false, "imu": true}
+    }
+} 

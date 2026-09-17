@@ -1,0 +1,17 @@
+Left Hand:
+----------
+I    : 1
+ii   : 12
+iii  : 23
+IV   : 2
+V    : 3
+vi   : 13
+viio : 4 (?)
+
+Right Hand:
+-----------
+1 : first inversion
+2 : second inversion
+3 : seventh
+4 : ninth
+
