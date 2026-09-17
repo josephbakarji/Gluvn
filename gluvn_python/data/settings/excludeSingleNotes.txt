@@ -1,6 +1,0 @@
-exclude
-thumb
-pinky
-major
-ring
-index

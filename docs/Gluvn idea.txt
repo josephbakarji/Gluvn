@@ -1,2 +1,0 @@
-Gluvn idea:
-	- let the volume depend on both the pressure sensor and the accelerometer
