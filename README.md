@@ -2,7 +2,7 @@
 
 The next evolution of GLUVN: **wireless, portable, and powered by M5Stick C Plus 1.1**
 
-**✨ NEW**: This is the **M5-GLUVN** project—a complete redesign of the original GLUVN with wireless BLE connectivity, built-in IMU, and a custom PCB with multiplexer support. For the original Arduino-based USB version, see [README_WIRED.md](README_WIRED.md).
+**✨ NEW**: This is the **M5-GLUVN** project—a complete redesign of the original GLUVN with wireless BLE connectivity, built-in IMU, and a custom PCB with multiplexer support. For the original Arduino-based USB version, see [docs/README_WIRED.md](docs/README_WIRED.md).
 
 ## 📋 Project Overview
 
@@ -75,29 +75,79 @@ PCB Features:
 ## 📁 Project Structure
 
 ```
-GLUVN-M5/
-├── gluvn_python/              # Main Python application (shared with original)
-│   ├── core/                  # Core business logic
-│   ├── configs/               # Configuration management
-│   ├── visualization/         # GUI and real-time display (PyQt5)
-│   ├── examples/              # Pre-built applications
-│   ├── tests/                 # Unit tests
-│   ├── port_read.py           # USB serial reader (original)
-│   ├── port_read_BLE.py       # ⭐ NEW: BLE reader for M5
-│   ├── calibrate_eeprom.py    # USB calibration
-│   ├── calibrate_eeprom_BLE.py # ⭐ NEW: BLE calibration
-│   ├── benchmark_bandwidth.py # ⭐ NEW: Benchmark BLE vs USB
-│   └── senstonote_modern.py   # Core application framework
+Wireless-Gluvn/
+├── README.md                              # Project overview and setup guidance
+├── firmware/
+│   └── m5stick_firmware/
+│       ├── m5stick_firmware.ino          # Main M5Stick firmware
+│       ├── calibration.h                 # Calibration constants and sensor mapping
+│       ├── Diagnostics.h                 # Runtime diagnostics helpers
+│       ├── MahonyAHRS.h                  # AHRS orientation filter
+│       └── NavEKF.h                      # Navigation / attitude estimator
 │
-├── arduino/
-│   └── sendsens/
-│       ├── sendsens.ino       # ⭐ UPDATED: M5Stick + BLE + Multiplexer firmware
-│       └── calibration.h      # Generated calibration constants
+├── software_python/
+│   ├── apps/
+│   │   ├── app_10fig_accel.py            # 10-finger instrument with accel-based volume
+│   │   ├── app_10fig_inst_Flex.py       # Flex-only instrument app
+│   │   ├── app_10fig_inst_FSR.py        # FSR/pressure instrument app
+│   │   ├── app_10fig_pitch.py           # Pitch modulation app
+│   │   ├── app_continuous_gesture.py    # Continuous gesture-to-MIDI surface
+│   │   ├── app_harmonizer.py            # Harmonic / chord-oriented app
+│   │   ├── app_jacob_choir.py           # Choir-like multi-voice performance app
+│   │   ├── app_moving_window_accel.py  # Moving-window instrument with accel modulation
+│   │   ├── app_moving_window_flex.py   # Moving-window flex-driven app
+│   │   ├── app_moving_window_flex_press.py
+│   │   └── examples/
+│   │       └── README.md                # Example GUI walkthroughs and launch patterns
+│   ├── core/
+│   │   ├── app_core.py                  # Shared app runtime and sensor processing
+│   │   ├── base_config.py               # Base configuration and constants
+│   │   ├── data_analysis.py             # Data persistence and analysis utilities
+│   │   ├── midi_writer.py               # MIDI output layer
+│   │   ├── note_mapper.py               # Scale and note mapping logic
+│   │   ├── port_read.py                 # Serial/BLE reader and parser
+│   │   └── pose_provider.py             # Pose / sensor abstraction layer
+│   ├── strategies/
+│   │   ├── base_strategies.py           # Strategy base classes
+│   │   ├── dual_hand_coupling.py        # Coupled dual-hand control logic
+│   │   ├── energy_excitation.py         # Energy / excitation mapping
+│   │   ├── kinematics.py                # Kinematic transforms and motion logic
+│   │   ├── mapping_strategies.py        # Note mapping strategies
+│   │   ├── modulation_strategies.py    # Modulation control strategies
+│   │   ├── tilt_surface.py              # Tilt-surface interaction model
+│   │   └── trigger_strategies.py        # Trigger logic and gating
+│   ├── ui/
+│   │   ├── digital_twin.py              # Live motion visualization
+│   │   ├── finger_widgets.py            # Finger-state widgets
+│   │   ├── piano_keyboard.py            # MIDI keyboard-like UI
+│   │   └── sensor_threads.py            # Sensor-thread UI helpers
+│   ├── tests/
+│   │   ├── test_hands_MP.py             # Hand-processing checks
+│   │   ├── test_nav_quat_pipeline.py    # Navigation/quaternion pipeline tests
+│   │   ├── test_pose_provider.py        # Pose-provider validation
+│   │   └── test_trigger_strategies.py   # Trigger-strategy unit tests
+│   ├── tools/
+│   │   ├── benchmark_bandwidth.py       # BLE/serial bandwidth diagnostics
+│   │   ├── calibrate_eeprom.py          # Calibration helper
+│   │   ├── debug_sensors.py             # Live sensor debugging
+│   │   ├── plot_sensors.py              # Sensor plotting utilities
+│   │   ├── sens_FFT.py                  # FFT analysis utilities
+│   │   └── sens_times_series.py         # Time-series inspection tools
+│   ├── legacy/
+│   │   └── ...                          # Older prototypes and experimental code
+│   ├── data/
+│   │   └── ...                          # Calibration and experiment data
+│   ├── figures/
+│   │   └── ...                          # Generated plots and visuals
+│   ├── pyproject.toml                  # Python package metadata
+│   └── __init__.py                     # Package marker
 │
-├── docs/                      # Documentation
-│   ├── Datasheets/
-│   └── Pins and sensr mapping.pdf
-│   └── ...
+├── docs/
+│   ├── README_WIRED.md                 # Original USB/wired hardware reference
+│   ├── Datasheets/                     # Sensor and board datasheets
+│   ├── Notes/                          # Design notes, success docs, and setup guides
+│   └── *.pdf                           # Architecture and hardware reference docs
+└── .gitignore
 ```
 
 ## 🚀 Quick Start - M5-GLUVN
@@ -115,7 +165,7 @@ GLUVN-M5/
 # Using Arduino IDE:
 # 1. Install M5Unified library
 # 2. Install ESP32 board support
-# 3. Open: arduino/sendsens/sendsens.ino
+# 3. Open: firmware/m5stick_firmware/m5stick_firmware.ino
 # 4. Board: M5Stack-Core2 (or M5Stick C Plus)
 # 5. Upload
 
@@ -130,14 +180,13 @@ GLUVN-M5/
 ### Step 2: Install Python Dependencies
 
 ```bash
-cd gluvn_python
+cd software_python
 
-# Install core dependencies
-pip install numpy scipy
+# Install the project in editable mode
+pip install -e .
 
-# Install for GUI + BLE support
-pip install PyQt5 pygame
-pip install bleak  # ⭐ BLE library (NEW)
+# Install runtime dependencies used by the apps
+pip install numpy scipy PyQt5 bleak
 
 # Test BLE functionality
 python -c "from bleak import BleakScanner; print('✅ BLE working')"
@@ -146,27 +195,28 @@ python -c "from bleak import BleakScanner; print('✅ BLE working')"
 ### Step 3: Calibrate with BLE
 
 ```bash
-# Make sure M5Stick is powered on and near computer
-python calibrate_eeprom_BLE.py
+# Make sure the M5Stick is powered on and near the host computer
+cd software_python/tools
+python calibrate_eeprom.py
 ```
 
 **What to do**:
-1. Select hand (L or R)
-2. For each finger: Flex sensor value reaches max, then release
-3. Apply light pressure on FSR, then heavy pressure
-4. Calibration values saved to M5 NVS (non-volatile storage)
+1. Select hand (L or R) in the calibration flow
+2. Sweep each finger through its full flex range and relax back to neutral
+3. Apply light and then strong pressure on the FSR channels
+4. Save the calibration values for use by the live sensor pipeline
 
 ### Step 4: Run the Application
 
 ```bash
-# For BLE mode (wireless):
-python examples/ten_finger_gui_with_sensors.py --ble
+cd software_python
 
-# For USB fallback (if BLE unavailable):
-python examples/ten_finger_gui_with_sensors.py --usb
+# Example apps that match the current repository structure
+python apps/app_harmonizer.py
+python apps/app_continuous_gesture.py
 
-# With BLE bandwidth monitoring:
-python benchmark_bandwidth.py --duration 30 --mode ble
+# Performance / diagnostics utilities
+python tools/benchmark_bandwidth.py
 ```
 
 ## 🔌 Wiring & PCB Assembly
@@ -238,11 +288,11 @@ Same binary protocol as original GLUVN, available on USB-C port for:
 
 ## 📖 Documentation
 
-- **[GETTING_STARTED.md](gluvn_python/GETTING_STARTED.md)** - Comprehensive quickstart guide
-- **[USER_CONFIGURABLE_PARAMETERS.md](gluvn_python/USER_CONFIGURABLE_PARAMETERS.md)** - Detailed parameter tuning
-- **[ARCHITECTURE_VERIFICATION.md](gluvn_python/ARCHITECTURE_VERIFICATION.md)** - Technical architecture details
-- **[CLEAN_ARCHITECTURE_SUCCESS.md](gluvn_python/CLEAN_ARCHITECTURE_SUCCESS.md)** - Design patterns verification
-- **[examples/README.md](gluvn_python/examples/README.md)** - Application examples guide
+- **[docs/README_WIRED.md](docs/README_WIRED.md)** - Original wired USB reference and hardware notes
+- **[docs/Notes/GETTING_STARTED.md](docs/Notes/GETTING_STARTED.md)** - Setup and workflow guidance
+- **[docs/Notes/CLEAN_ARCHITECTURE_SUCCESS.md](docs/Notes/CLEAN_ARCHITECTURE_SUCCESS.md)** - Architecture and design history
+- **[docs/Notes/USER_CONFIGURABLE_PARAMETERS.md](docs/Notes/USER_CONFIGURABLE_PARAMETERS.md)** - Tuning and parameter reference
+- **[software_python/apps/examples/README.md](software_python/apps/examples/README.md)** - Current app examples and GUI usage
 
 
 ## 🔧 Configuration & Tuning
@@ -292,8 +342,9 @@ python -c "from bleak import BleakScanner; asyncio.run(BleakScanner.discover())"
 ```bash
 # Check MUX channel selection
 # Verify wiring to CD4067 inputs
-# Test with raw ADC read (not multiplexed):
-python simple_sensor_test.py --mux-disable
+# Test with a live raw-sensor check from the project test utilities:
+cd software_python
+python tests/testfiles/simple_sensor_test.py
 ```
 
 ### Performance Issues
