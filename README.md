@@ -25,7 +25,7 @@ The next evolution of GLUVN: **wireless, portable, and powered by M5Stick C Plus
   - Built-in 6-DOF IMU (BMI270 or MPU6886)
   - 12-bit ADC (4096 levels) for sensor reading
   - BLE and WiFi capabilities
-  - 540 mAh battery for portable play
+  - 120 mAh battery for portable play
   - USB-C for charging and serial communication
 
 ### Sensor Configuration
