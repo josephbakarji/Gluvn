@@ -46,6 +46,9 @@ class Reader:
         self.use_ble = use_ble
         self.force_ble = force_ble
         self.ble_timeout = ble_timeout
+        # Shared across every ReadBLE this session -- see BleLoopThread.
+        # Only actually started in start_readers() if a hand ends up on BLE.
+        self.ble_loop_thread = BleLoopThread()
 
         self.threads = self.make_reader_threads()
         self.printers = self.make_printer_threads()
@@ -76,7 +79,7 @@ class Reader:
                     if self.use_ble:
                         print(f"[{hand.upper()}] No USB port — connecting via BLE.")
                         ble_name = BLE_NAME_R if hand == 'r' else BLE_NAME_L
-                        threads[hand]['serial'] = ReadBLE(ble_name, sensq=shared_q)
+                        threads[hand]['serial'] = ReadBLE(ble_name, self.ble_loop_thread, sensq=shared_q)
                         threads[hand]['is_ble'] = True
                     else:
                         print(f"Warning: no USB port for {hand} and BLE is disabled — skipping.")
@@ -144,15 +147,24 @@ class Reader:
         and confirm it actually took effect by watching for data_key to
         appear on this hand's decoded queue, resending on a timeout.
 
-        send_command has no ACK -- a dropped BLE write (more likely on a
-        weaker/lossier link than the other hand's) previously left that
-        hand's stream silently never enabled, with no visible error: the
-        command "succeeds" locally (no exception), the firmware just never
-        receives or acts on it. This mirrors ensure_fresh_gyro_calibration's
-        confirm-before-proceeding approach instead of trusting a one-shot send.
+        send_command has no ACK -- a dropped BLE write previously left that
+        hand's stream silently never enabled, with no visible error. This
+        mirrors ensure_fresh_gyro_calibration's confirm-before-proceeding
+        approach instead of trusting a one-shot send.
+
+        Drains parser_q immediately before each send so every sample read
+        afterward is guaranteed to postdate the command -- otherwise a hand
+        whose queue already has a backlog can spend most of `timeout`
+        reading pre-command samples that can never contain data_key.
         """
         parser_q = self.threads[hand]['parser'].getQ()
         for attempt in range(1, retries + 1):
+            while True:
+                try:
+                    parser_q.get_nowait()
+                except queue.Empty:
+                    break
+
             self.send_command(hand, cmd)
             deadline = time.time() + timeout
             while time.time() < deadline:
@@ -169,12 +181,18 @@ class Reader:
         return False
 
     def start_readers(self):
+        if self.parse_file is None:
+            self.ble_loop_thread.start()
+            # Kick off every hand's connection attempt concurrently, before
+            # blocking on any of them -- connecting hands one at a time let
+            # whichever hand went first monopolize the shared BLE adapter.
+            for hand in self.hands:
+                self.threads[hand]['serial'].start()
+
         for hand in self.hands:
             if self.parse_file is not None:
                 self.threads[hand]['parser'].start()
                 continue
-
-            self.threads[hand]['serial'].start()
 
             if self.threads[hand].get('is_ble', False):
                 print(f"[{hand.upper()}] Connecting via BLE...")
@@ -199,6 +217,8 @@ class Reader:
                     self.threads[hand]['serial'].stop()
                 except Exception:
                     pass
+        if self.parse_file is None:
+            self.ble_loop_thread.stop()
         self.report_hand_integrity()
 
     def report_hand_integrity(self):
@@ -238,20 +258,73 @@ class Reader:
             print(f"Warning: failed to send command to {hand}: {e}")
 
 
-class ReadBLE(Thread):
-    def __init__(self, device_name, sensq=None, qsize=48):
-        Thread.__init__(self)
-        self.daemon = True
+class BleLoopThread:
+    """One shared asyncio event loop, running in one dedicated daemon
+    thread, that every ReadBLE instance schedules its BLE coroutine onto.
+
+    On a single physical BLE adapter, two independent event-loop-per-thread
+    BleakClients contend for the same radio -- some OS BLE backends do not
+    fairly time-slice multiple simultaneous GATT sessions driven by separate
+    event loops, producing a large, connect-order-dependent throughput split
+    between hands. A single shared loop lets both BleakClients' I/O
+    interleave cooperatively on one thread instead of two OS threads
+    independently contending for the same radio.
+
+    One instance is created by Reader and shared across every ReadBLE for
+    the session, not one per hand.
+    """
+    def __init__(self):
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._started = False
+
+    def _run(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def start(self):
+        if not self._started:
+            self._thread.start()
+            self._started = True
+
+    def submit(self, coro):
+        """Schedule an already-constructed coroutine onto this loop from
+        any thread."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+    def stop(self):
+        if self._started:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=2.0)
+
+
+class ReadBLE:
+    """Not a Thread subclass -- see BleLoopThread. start()/stop() keep the
+    same names/semantics callers already use, but start() submits this
+    instance's coroutine onto a shared loop (ble_loop_thread) instead of
+    running its own."""
+
+    # Per-operation timeout for connect/start_notify/write_gatt_char. Bounds
+    # how long a single hung Bleak/OS call can occupy the shared loop's
+    # thread -- without this, a stuck await here would also stall every
+    # other hand's coroutine sharing the same loop.
+    BLE_OP_TIMEOUT_SEC = 8.0
+
+    def __init__(self, device_name, ble_loop_thread, sensq=None, qsize=48):
         self.device_name = device_name
+        self._ble_loop_thread = ble_loop_thread
         self.sensq = sensq if sensq is not None else queue.Queue(maxsize=qsize)  # own queue if none given
         self._stop_flag = threading.Event()
         self._connected_event = threading.Event()
-        self._loop = asyncio.new_event_loop()
         self._client = None
-        self._write_q = asyncio.Queue()
+        # Constructed lazily in _ble_loop(), on the shared loop's own
+        # thread -- an asyncio.Queue() must be bound to the loop that will
+        # await it, and this instance may be constructed before
+        # ble_loop_thread.start() has actually spun up that thread.
+        self._write_q = None
 
-    def run(self):
-        self._loop.run_until_complete(self._ble_loop())
+    def start(self):
+        self._ble_loop_thread.submit(self._ble_loop())
 
     def stop(self):
         self._stop_flag.set()
@@ -263,7 +336,11 @@ class ReadBLE(Thread):
         return self._connected_event.wait(timeout)
 
     def send(self, text):
-        asyncio.run_coroutine_threadsafe(self._write_q.put(text), self._loop)
+        # A send() arriving before _write_q exists is dropped rather than
+        # raising -- same effective behavior as a fire-and-forget put onto
+        # a queue nothing had read yet.
+        if self._write_q is not None:
+            self._ble_loop_thread.submit(self._write_q.put(text))
 
     def _notification_handler(self, sender, data: bytearray):
         try:
@@ -279,27 +356,34 @@ class ReadBLE(Thread):
                 pass
 
     async def _ble_loop(self):
+        self._write_q = asyncio.Queue()
+
         while not self._stop_flag.is_set():
             try:
                 device = await BleakScanner.find_device_by_name(self.device_name, timeout=5.0)
                 if device is None:
-                    print(f"BLE: no advertisement seen for '{self.device_name}' in 5s, retrying...")
                     await asyncio.sleep(1)
                     continue
 
-                async with BleakClient(device) as client:
+                async with BleakClient(device, timeout=self.BLE_OP_TIMEOUT_SEC) as client:
                     self._client = client
                     self._connected_event.set()
 
-                    await client.start_notify(NUS_TX_CHAR_UUID, self._notification_handler)
+                    await asyncio.wait_for(
+                        client.start_notify(NUS_TX_CHAR_UUID, self._notification_handler),
+                        timeout=self.BLE_OP_TIMEOUT_SEC,
+                    )
 
                     while not self._stop_flag.is_set() and client.is_connected:
                         try:
                             cmd = await asyncio.wait_for(self._write_q.get(), timeout=0.1)
-                            await client.write_gatt_char(
-                                NUS_RX_CHAR_UUID,
-                                cmd.encode() if isinstance(cmd, str) else cmd,
-                                response=False
+                            await asyncio.wait_for(
+                                client.write_gatt_char(
+                                    NUS_RX_CHAR_UUID,
+                                    cmd.encode() if isinstance(cmd, str) else cmd,
+                                    response=False
+                                ),
+                                timeout=self.BLE_OP_TIMEOUT_SEC,
                             )
                         except asyncio.TimeoutError:
                             pass
@@ -322,6 +406,7 @@ class ReadSerial(Thread):
         self.port = port
         self.baud = baud
         self.sensq = sensq if sensq is not None else queue.Queue(maxsize=qsize)
+        self._port_lock = threading.Lock()
 
         self.serial_port = serial.Serial()
         self.serial_port.port = self.port
@@ -347,9 +432,10 @@ class ReadSerial(Thread):
         """Send NORMAL_MODE after the read thread is already running."""
         time.sleep(delay)
         try:
-            self.serial_port.write(b'NORMAL_MODE\n')
-            time.sleep(0.3)
-            self.serial_port.reset_input_buffer()
+            with self._port_lock:
+                self.serial_port.write(b'NORMAL_MODE\n')
+                time.sleep(0.3)
+                self.serial_port.reset_input_buffer()
             print(f"[{self.port}] Firmware streaming state initialized.")
         except Exception as e:
             print(f"Warning: Handshake failed on {self.port}: {e}")
@@ -360,13 +446,21 @@ class ReadSerial(Thread):
 
     def read(self):
         try:
-            n = self.serial_port.in_waiting or 1
-            temp = self.serial_port.read(n)
+            with self._port_lock:
+                n = self.serial_port.in_waiting or 1
+                temp = self.serial_port.read(n)
             if temp:
                 try:
-                    self.sensq.put(temp, timeout=0.5)
+                    self.sensq.put_nowait(temp)
                 except queue.Full:
-                    pass
+                    try:
+                        self.sensq.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.sensq.put_nowait(temp)
+                    except queue.Full:
+                        pass
         except Exception as e:
             print(f"Warning: serial read failed on {self.port}: {e}")
             time.sleep(0.12)
@@ -384,7 +478,8 @@ class ReadSerial(Thread):
 
     def send(self, text):
         try:
-            self.serial_port.write(text.encode())
+            with self._port_lock:
+                self.serial_port.write(text.encode())
         except Exception as e:
             print(f"Warning: failed to write to {self.port}: {e}")
 
@@ -523,8 +618,8 @@ class ParseSerial(Thread):
         }
         self._buf = bytearray()
 
-        # Cheap running counters for ad-hoc inspection (e.g. parser.crc_errors
-        # in a REPL) — not tied to any firmware-side counter.
+        # Cheap running counters for ad-hoc inspection -- not tied to any
+        # firmware-side counter.
         self.crc_errors = 0
         self.frames_ok = 0
         self.flags_mismatch_errors = 0   # length didn't match what flags implied
@@ -683,9 +778,16 @@ class ParseSerial(Thread):
                     data_to_put['time'] = time.time() - self.time0
 
                 try:
-                    self.dataq.put(data_to_put, timeout=0.1)
+                    self.dataq.put_nowait(data_to_put)
                 except queue.Full:
-                    pass
+                    try:
+                        self.dataq.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self.dataq.put_nowait(data_to_put)
+                    except queue.Full:
+                        pass
 
                 self.frames_ok += 1
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Gluvn-M5 live dual-hand digital twin (3D visualization).
 """
 
@@ -9,11 +9,12 @@ import html
 from collections import deque
 
 from core.port_read import Reader
+from core.pose_provider import firmware_pose   # fallback only; see _apply_sample_to_hand
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 import pyqtgraph.opengl as gl
-from pyqtgraph.Qt import QtCore, QtWidgets
+from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 
 # ======================================================================
 # 1. DATA ACQUISITION  decode, drain
@@ -99,6 +100,7 @@ ACCEL_ARROW_LEN, ACCEL_ARROW_R = 0.009, 0.0032
 HAND_COLORS_GL = {"l": (0.25, 0.65, 1.0, 1.0), "r": (1.0, 0.42, 0.25, 1.0)}
 HAND_COLORS_CSS = {"l": "#3fa7ff", "r": "#ff6b3f"}
 HAND_NAMES = {"l": "LEFT", "r": "RIGHT"}
+MOTION_POS_RANGE_M = 2.0
 
 # M5StickC-Plus-1.1-like proportions (half-extents).
 # The IMU axis triad still reads as "coming out of the device" at the
@@ -124,6 +126,17 @@ SKIN_BASE = np.array([0.85, 0.70, 0.58])
 # --------------------------------------------------------------------
 PALM_FORWARD_LOCAL = np.array([0.0, 1.0, 0.0])
 CURL_LOCAL_AXIS = np.array([0.0, 0.0, -1.0])
+
+
+def mounting_mesh_basis(mounting):
+    """Map the hand template (+Y fingers) into the configured sensor frame."""
+    if mounting == "fingers_along_x":
+        return np.array([[0.0, -1.0, 0.0],
+                         [1.0, 0.0, 0.0],
+                         [0.0, 0.0, 1.0]])
+    if mounting == "firmware_rot180":
+        return np.diag([-1.0, -1.0, 1.0])
+    return np.eye(3)
 
 # anatomical Y-axis anchors relative to the M5Stick center (0.0)
 JUNCTION_Y = 0.08
@@ -385,6 +398,8 @@ class HandState:
         self.hand = hand
         self.yaw = self.pitch = self.roll = 0.0
         self.R = np.eye(3)
+        self.mesh_R = np.eye(3)
+        self.mounting = "firmware"
         self.origin = ANCHORS[hand].copy()
         self.flex = None
         self.press = None
@@ -399,11 +414,24 @@ class HandState:
         self.has_data = False
         self.low_battery = False
         self.last_sample_wall_time = None
+        # Currently-sounding note names, one per sector, e.g. ['C4', 'E4', None].
+        # Persistent (unlike the fading effect-text history) -- holds the
+        # last value reported by app_jacob_choir.py's effect_q until the
+        # next note-changing event actually updates it. Shared across both
+        # hands' HandState objects, since playing_notes is one 3-slot
+        # ensemble, not per-hand -- see _apply_effect.
+        self.notes = None
+        self.use_yaw = True
+        self.arm_ypr = None     # same attitude, named for how the stick is worn (what the music reads)
+        self.motion = None      # core.pose_provider.MotionFrame of the latest frame
+        self.position_trustworthy = False
 
     def update_kinematics(self, yaw, pitch, roll, R, origin, flex, press,
-                           velocity, accel_raw, dt):
+                           velocity, accel_raw, dt, mounting="firmware"):
         self.yaw, self.pitch, self.roll = yaw, pitch, roll
         self.R, self.origin = R, origin
+        self.mounting = mounting
+        self.mesh_R = R @ mounting_mesh_basis(mounting)
         self.flex, self.press = flex, press
         self.velocity = velocity
         self.accel_raw = accel_raw
@@ -440,8 +468,8 @@ class ForearmModel:
         view.addItem(self.item)
 
     def update(self, st: HandState):
-        p0 = st.origin + st.R @ np.array([0.0, JUNCTION_Y, ARM_Z_OFFSET])
-        p1 = st.origin + st.R @ np.array([0.0, FOREARM_END_Y, ARM_Z_OFFSET])
+        p0 = st.origin + st.mesh_R @ np.array([0.0, JUNCTION_Y, ARM_Z_OFFSET])
+        p1 = st.origin + st.mesh_R @ np.array([0.0, FOREARM_END_Y, ARM_Z_OFFSET])
         v, f, n = place_cylinder(p0, p1, FOREARM_R_WRIST, FOREARM_R_ELBOW,
                                   sides=FOREARM_SIDES, cap0=False, cap1=True)
         self.item.setMeshData(vertexes=v, faces=f, color=self.color)
@@ -462,9 +490,9 @@ class M5StickModel:
         body_origin = st.origin
         screen_origin = st.origin
         
-        bv, _ = transform_local_mesh(DEVICE_BODY_TEMPLATE[0], DEVICE_BODY_TEMPLATE[2], st.R, body_origin)
+        bv, _ = transform_local_mesh(DEVICE_BODY_TEMPLATE[0], DEVICE_BODY_TEMPLATE[2], st.mesh_R, body_origin)
         self.body_item.setMeshData(vertexes=bv, faces=DEVICE_BODY_TEMPLATE[1], color=DEVICE_COLOR)
-        sv, _ = transform_local_mesh(DEVICE_SCREEN_TEMPLATE[0], DEVICE_SCREEN_TEMPLATE[2], st.R, screen_origin)
+        sv, _ = transform_local_mesh(DEVICE_SCREEN_TEMPLATE[0], DEVICE_SCREEN_TEMPLATE[2], st.mesh_R, screen_origin)
         
         glow = 0.5 + 0.5 * st.energy
         r, g, b, a = self.screen_base_color
@@ -492,7 +520,7 @@ class HandModel:
         view.addItem(self.fingers_item)
 
     def update(self, st: HandState):
-        pv, _ = transform_local_mesh(PALM_TEMPLATE[0], PALM_TEMPLATE[2], st.R, st.origin)
+        pv, _ = transform_local_mesh(PALM_TEMPLATE[0], PALM_TEMPLATE[2], st.mesh_R, st.origin)
         self.palm_item.setMeshData(vertexes=pv, faces=PALM_TEMPLATE[1], color=self.color)
 
         if st.flex is None:
@@ -503,9 +531,9 @@ class HandModel:
         for i in range(5):
             flex_frac = st.flex[i] / 255.0
             base, joint, tip = _finger_geom(st.hand, i, flex_frac)
-            base_w = st.origin + st.R @ base
-            joint_w = st.origin + st.R @ joint
-            tip_w = st.origin + st.R @ tip
+            base_w = st.origin + st.mesh_R @ base
+            joint_w = st.origin + st.mesh_R @ joint
+            tip_w = st.origin + st.mesh_R @ tip
             r0 = FINGER_R_BASE[FINGER_NAMES[i]]
             r_mid = r0 * 0.9
             r_tip = r0 * FINGER_R_TIP_FACTOR
@@ -540,8 +568,8 @@ class FingerSensorVisuals:
             flex_frac = float(np.clip(st.flex[i] / 255.0, 0.0, 1.0))
             press_frac = float(np.clip(st.press[i] / 255.0, 0.0, 1.0))
             base, joint, tip = _finger_geom(st.hand, i, flex_frac)
-            tips.append(st.origin + st.R @ tip)
-            bases.append(st.origin + st.R @ base)
+            tips.append(st.origin + st.mesh_R @ tip)
+            bases.append(st.origin + st.mesh_R @ base)
             fsr_colors.append(tuple(lo + press_frac * (hi - lo) for lo, hi in zip(FSR_COLOR_LOW, FSR_COLOR_HIGH)))
             fsr_sizes.append((FSR_SIZE_MIN + press_frac * (FSR_SIZE_MAX - FSR_SIZE_MIN)) * (0.9 + 0.2 * press_frac * pulse))
             flex_colors.append(FLEX_DOT_COLOR)
@@ -573,8 +601,8 @@ class IMUAxisGizmo:
     def update(self, st: HandState):
         parts = []
         for axis_vec, item, label, color in zip(BODY_AXES, self.axis_items, self.axis_labels, AXIS_COLORS):
-            tip = st.origin + AXIS_LEN * (st.R @ axis_vec)
-            far = st.origin + (AXIS_LEN + AXIS_ARROW_LEN) * (st.R @ axis_vec)
+            tip = st.origin + AXIS_LEN * (st.mesh_R @ axis_vec)
+            far = st.origin + (AXIS_LEN + AXIS_ARROW_LEN) * (st.mesh_R @ axis_vec)
             item.setData(pos=np.array([st.origin, tip]))
             label.setData(pos=far)
             v, f, n = place_cylinder(tip, far, AXIS_ARROW_R, 0.0, sides=8, cap0=True, cap1=False)
@@ -620,7 +648,7 @@ class AccelerationVector:
         view.addItem(self.arrow)
 
     def update(self, st: HandState):
-        vec_world = st.R @ (st.accel_raw * ACCEL_VIS_SCALE)
+        vec_world = st.mesh_R @ (st.accel_raw * ACCEL_VIS_SCALE)
         length = np.linalg.norm(vec_world)
         if length > ACCEL_VEC_MAXLEN:
             vec_world = vec_world / length * ACCEL_VEC_MAXLEN
@@ -773,7 +801,8 @@ class HandVisual:
 # ======================================================================
 class TelemetryPanel(QtWidgets.QWidget):
     """Per-hand dashboard: YPR, position, velocity, calibrated accel, finger
-    flex/FSR bars, moving state, current effect."""
+    flex/FSR bars, currently-sounding note names (persistent), moving
+    state, current effect (fading history)."""
 
     def __init__(self, hand, parent=None):
         super().__init__(parent)
@@ -787,6 +816,7 @@ class TelemetryPanel(QtWidgets.QWidget):
         outer.addWidget(title)
 
         self.orient_lbl = self._mono_label(outer)
+        self.arm_lbl = self._mono_label(outer)
         self.pos_lbl = self._mono_label(outer)
         self.vel_lbl = self._mono_label(outer)
         self.accel_lbl = self._mono_label(outer)
@@ -805,12 +835,26 @@ class TelemetryPanel(QtWidgets.QWidget):
         self.fsr_bars = self._make_bars(outer, "#ff7f5f")
 
         outer.addWidget(self._divider())
+        notes_hdr = QtWidgets.QLabel("NOW PLAYING   \u25b6 = pointed sector")
+        notes_hdr.setStyleSheet("color:#7fcc9a; font: bold 12px 'Consolas',monospace;")
+        outer.addWidget(notes_hdr)
+        self._notes = None
+        self._active_slot = None
+        self.notes_lbl = QtWidgets.QLabel("\u2014")
+        self.notes_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.notes_lbl.setStyleSheet("color:#9fffc0; font: bold 24px 'Consolas','Menlo',monospace;")
+        # QLabel under-reports the height of multi-line rich text at a stylesheet font
+        # size (it clipped the third line), so reserve it: 3 lines x ~30 px.
+        self.notes_lbl.setFixedHeight(100)
+        outer.addWidget(self.notes_lbl)
+
+        outer.addWidget(self._divider())
         self._effect_history = deque(maxlen=4)   # most-recent-first; short so the panel stays uncluttered
 
         self.effect_lbl = QtWidgets.QLabel("effect: \u2014")
         self.effect_lbl.setWordWrap(True)
         self.effect_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.effect_lbl.setStyleSheet("color:#ffd75f; font: 11px 'Consolas','Menlo',monospace;")
+        self.effect_lbl.setStyleSheet("color:#ffd75f; font: 13px 'Consolas','Menlo',monospace;")
         outer.addWidget(self.effect_lbl)
         self.setStyleSheet("background:#161821; border-radius:6px;")
         self.setMinimumWidth(210)
@@ -849,7 +893,10 @@ class TelemetryPanel(QtWidgets.QWidget):
         return bars
 
     def update(self, st: HandState):
-        self.orient_lbl.setText(f"yaw {st.yaw:+6.1f}\u00b0 pitch {st.pitch:+6.1f}\u00b0 roll {st.roll:+6.1f}\u00b0")
+        self.orient_lbl.setText(f"fw   Y{st.yaw:+7.1f} P{st.pitch:+6.1f} R{st.roll:+6.1f}")
+        if st.arm_ypr is not None:
+            self.arm_lbl.setText(f"arm        P{st.arm_ypr[1]:+6.1f} R{st.arm_ypr[2]:+6.1f} (music)")
+        self._set_active_from(st.motion)
         ox, oy, oz = st.origin
         self.pos_lbl.setText(f"pos   x{ox:+5.2f} y{oy:+5.2f} z{oz:+5.2f}")
         if st.velocity is not None:
@@ -884,6 +931,166 @@ class TelemetryPanel(QtWidgets.QWidget):
                 fade = max(180 - i * 45, 70)   # dims with age
                 lines.append(f'<span style="color:#{fade:02x}{fade:02x}70;">&nbsp;&nbsp;{safe}</span>')
         self.effect_lbl.setText("<br>".join(lines))
+
+    def set_notes(self, notes):
+        """Persistent 'NOW PLAYING' readout: one line per slot, big. Unlike
+        set_effect's fading history it always shows the CURRENT ensemble."""
+        self._notes = list(notes) if notes else None
+        self._render_notes()
+
+    def _set_active_from(self, motion):
+        slot = sector_slot(motion)
+        if slot != self._active_slot:
+            self._active_slot = slot
+            self._render_notes()
+
+    def _render_notes(self):
+        if not self._notes:
+            self.notes_lbl.setText("\u2014")
+            return
+        lines = []
+        for i, n in enumerate(self._notes):
+            name = "\u2014" if n in (None, "N/A") else html.escape(str(n))
+            if i == self._active_slot:
+                lines.append(f'<span style="color:#ffd75f;">\u25b6 [{i}] {name}</span>')
+            else:
+                lines.append(f'<span style="color:#9fffc0;">&nbsp;&nbsp; [{i}] {name}</span>')
+        self.notes_lbl.setText("<br>".join(lines))
+
+
+# Yaw sectors. The provider's HandMotion.yaw_sector is 0 (yaw below the window),
+# 1 (inside it) or -1 (above it); the choir indexes playing_notes with it, and a
+# negative index is the LAST slot -- so -1 is slot 2. Firmware yaw is CCW-positive
+# seen from above, so a smaller yaw is a turn to the RIGHT.
+def sector_slot(motion):
+    if motion is None or not motion.valid:
+        return None
+    return 2 if motion.yaw_sector < 0 else motion.yaw_sector
+
+
+class SectorBar(QtWidgets.QWidget):
+    """The yaw-sector display: three big boxes per hand -- turn LEFT (slot 2),
+    CENTER (slot 1, where you last struck), turn RIGHT (slot 0) -- each showing the
+    note it would step, the sector you are pointing at lit, and a needle showing
+    exactly where inside the window the forearm is. Pure display."""
+
+    ORDER = (2, 1, 0)                                  # left -> right on screen
+    NAMES = {2: "LEFT", 1: "CENTER", 0: "RIGHT"}
+    UNITS_TO_DEG = 360.0 / 127.0                       # yaw is 127 units per turn
+    ROW_H = 78     # 2 rows + caption = 184 px: the whole window must still fit a 1080p screen
+    ACTIVE, ACTIVE_TXT, IDLE, IDLE_TXT = "#2ee6a6", "#06140e", "#1c1f2b", "#c9d1e0"
+
+    def __init__(self, hands, live_controls=None, parent=None):
+        super().__init__(parent)
+        self.hands = list(hands)
+        self.live_controls = live_controls
+        self.notes = None
+        self.use_yaw = True
+        self.state = {h: None for h in self.hands}     # hand -> (slot, offset_deg)
+        self.setMinimumHeight(34 + self.ROW_H * max(1, len(self.hands)))
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
+
+    def half_window_deg(self):
+        w = 10
+        if self.live_controls is not None:
+            w = self.live_controls.get_threshold("yaw_window", 10)
+        return float(w) * self.UNITS_TO_DEG
+
+    def set_notes(self, notes):
+        self.notes = list(notes) if notes else None
+        self.update()
+
+    def set_use_yaw(self, use_yaw):
+        self.use_yaw = bool(use_yaw)
+        self.update()
+
+    def set_hand(self, hand, motion):
+        if hand not in self.state:
+            return
+        slot = sector_slot(motion)
+        new = None if slot is None else (slot, (motion.scaled_yaw - motion.reference[0]) * self.UNITS_TO_DEG)
+        if new != self.state[hand]:
+            self.state[hand] = new
+            self.update()
+
+    # -- painting ----------------------------------------------------------
+
+    def _font(self, px, bold=True):
+        f = QtGui.QFont("Consolas")
+        f.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+        f.setPixelSize(px)
+        f.setBold(bold)
+        return f
+
+    def paintEvent(self, _event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QtGui.QColor("#12141b"))
+        p.setPen(QtGui.QColor("#8fa3bf"))
+        p.setFont(self._font(14))
+        p.drawText(QtCore.QRectF(10, 4, self.width() - 20, 24),
+                   QtCore.Qt.AlignmentFlag.AlignVCenter | QtCore.Qt.AlignmentFlag.AlignLeft,
+                   f"YAW SECTORS   turn the forearm LEFT  |  aim where you last struck = CENTER  |  turn RIGHT"
+                   f"      window \u00b1{self.half_window_deg():.0f}\u00b0"
+                   + ("" if self.use_yaw else "   YAW OFF: all steps -> RIGHT"))
+        top = 32
+        row_h = (self.height() - top) / max(1, len(self.hands))
+        for i, hand in enumerate(self.hands):
+            self._paint_row(p, hand, QtCore.QRectF(6, top + i * row_h, self.width() - 12, row_h))
+
+    def _paint_row(self, p, hand, rect):
+        color = QtGui.QColor(HAND_COLORS_CSS[hand])
+        if not self.use_yaw:
+            color.setAlpha(100)
+        state = self.state.get(hand)
+        p.setPen(color)
+        p.setFont(self._font(36))
+        p.drawText(QtCore.QRectF(rect.left(), rect.top(), 48, rect.height() - 18),
+                   QtCore.Qt.AlignmentFlag.AlignCenter, hand.upper())
+        x0, gap = rect.left() + 56, 12
+        total_w = rect.width() - 62
+        box_w = (total_w - 2 * gap) / 3
+        box_h = rect.height() - 20
+        for k, slot in enumerate(self.ORDER):
+            box = QtCore.QRectF(x0 + k * (box_w + gap), rect.top() + 2, box_w, box_h)
+            lit = self.use_yaw and state is not None and state[0] == slot
+            p.setPen(QtGui.QPen(color, 3 if lit else 1))
+            p.setBrush(QtGui.QColor(self.ACTIVE if lit else self.IDLE))
+            p.drawRoundedRect(box, 10, 10)
+            txt = QtGui.QColor(self.ACTIVE_TXT if lit else self.IDLE_TXT)
+            p.setPen(txt)
+            p.setFont(self._font(13))
+            p.drawText(box.adjusted(10, 3, -10, 0), QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft,
+                       f"[{slot}] {self.NAMES[slot]}")
+            note = self.notes[slot] if self.notes and slot < len(self.notes) else None
+            if self.notes is None:
+                note = "strike to set centre"
+            note = "\u2014" if note in (None, "N/A") else str(note)
+            # The note is centred and the slot label sits in the corner, so the note may use
+            # the whole box height; only its width limits it.
+            px = max(20, min(56, int(box_h - 6)))
+            while px > 16 and QtGui.QFontMetrics(self._font(px)).horizontalAdvance(note) > box_w - 24:
+                px -= 2
+            p.setFont(self._font(px))
+            p.drawText(box, QtCore.Qt.AlignmentFlag.AlignCenter, note)
+        # gauge: where inside the window the forearm points; window edges sit on the box seams
+        gy = rect.top() + box_h + 8
+        p.setPen(QtCore.Qt.PenStyle.NoPen)
+        p.setBrush(QtGui.QColor("#2a2d38"))
+        p.drawRoundedRect(QtCore.QRectF(x0, gy, total_w, 6), 3, 3)
+        p.setBrush(QtGui.QColor("#5a6072"))
+        for frac in (1 / 3, 2 / 3):
+            p.drawRect(QtCore.QRectF(x0 + total_w * frac - 1, gy - 3, 2, 12))
+        if state is not None:
+            half = max(self.half_window_deg(), 1e-6)
+            frac = min(max(0.5 - state[1] / (6.0 * half), 0.0), 1.0)      # +offset (turned left) moves left
+            p.setBrush(QtGui.QColor(self.ACTIVE))
+            p.drawEllipse(QtCore.QPointF(x0 + total_w * frac, gy + 3), 7, 7)
+            p.setPen(QtGui.QColor("#8fa3bf"))
+            p.setFont(self._font(13, bold=False))
+            p.drawText(QtCore.QRectF(rect.left(), rect.top() + box_h - 14, 52, 16),
+                       QtCore.Qt.AlignmentFlag.AlignCenter, f"{state[1]:+.0f}\u00b0")
+
 
 
 class EffectNotification(QtWidgets.QWidget):
@@ -964,11 +1171,16 @@ QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
 
 class ThresholdPanel(QtWidgets.QWidget):
     SPECS = [
+        # Fallback defaults ONLY: when a choir shares this LiveControls it seeds
+        # every key below in ChoirMovingWindow.__init__ and those values win (see
+        # get_threshold(key, default) in __init__). Keep these equal to the
+        # choir's __main__ constants so a standalone twin shows what would run.
+        # pitch: fires at range+hyst = 10 units = 14.2 deg, re-arms at 5 units.
         ('accel_trigger_thresh', 'accel trigger thresh', 0, 127, 110),
         ('accel_trigger_hysteresis', 'accel hysteresis', 0, 40, 10),
         ('roll_trigger_thresh_range', 'roll thresh range', 0, 63, 20),
         ('roll_trigger_hysteresis', 'roll hysteresis', 0, 30, 5),
-        ('pitch_trigger_thresh_range', 'pitch thresh range', 0, 63, 12),
+        ('pitch_trigger_thresh_range', 'pitch thresh range', 0, 63, 5),
         ('pitch_trigger_hysteresis', 'pitch hysteresis', 0, 30, 5),
         ('yaw_window', 'yaw window', 0, 63, 10),
         ('press_thresh', 'press thresh', 0, 255, 20),
@@ -985,7 +1197,12 @@ class ThresholdPanel(QtWidgets.QWidget):
         outer.setSpacing(2)
 
         group = QtWidgets.QGroupBox("LIVE THRESHOLDS")
-        group.setMinimumHeight(166)
+        group.setMinimumWidth(0)
+        group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                    QtWidgets.QSizePolicy.Policy.Preferred)
+        group.setCheckable(True)
+        group.setChecked(False)
+        group.setMaximumHeight(28)
         form = QtWidgets.QGridLayout(group)
         form.setContentsMargins(10, 10, 10, 8)
         form.setHorizontalSpacing(18)
@@ -1022,6 +1239,14 @@ class ThresholdPanel(QtWidgets.QWidget):
                 form.addWidget(value_lbl, row_idx, column * 3 + 2)
                 self.value_labels[key] = value_lbl
 
+        def toggle_contents(checked):
+            group.setMaximumHeight(190 if checked else 28)
+            for child in group.findChildren(QtWidgets.QWidget):
+                child.setVisible(checked)
+
+            group.toggled.connect(toggle_contents)
+            toggle_contents(False)
+
         outer.addWidget(group)
         self.setEnabled(live_controls is not None)
 
@@ -1032,6 +1257,11 @@ class ThresholdPanel(QtWidgets.QWidget):
 
 
 class TwinWindow(QtWidgets.QWidget):
+
+    def minimumSizeHint(self):
+        # The threshold grid retains a large hidden layout hint when collapsed;
+        # the visible controls fit within the two 250 px side panels and view.
+        return QtCore.QSize(1100, 617)
 
     def __init__(self, dataq, effect_q=None, hands=("l", "r"), send_command_fn=None, live_controls=None):
         super().__init__()
@@ -1062,10 +1292,13 @@ class TwinWindow(QtWidgets.QWidget):
 
         def make_side_telemetry(hand):
             panel = TelemetryPanel(hand)
-            panel.setMinimumHeight(376)
-            panel.setMaximumHeight(420)
+            panel.setMinimumWidth(0)
+            panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                                QtWidgets.QSizePolicy.Policy.Preferred)
+            panel.setMinimumHeight(300)
+            panel.setMaximumHeight(520)
             holder = QtWidgets.QWidget()
-            holder.setFixedWidth(270)
+            holder.setFixedWidth(250)
             layout = QtWidgets.QVBoxLayout(holder)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
@@ -1106,6 +1339,10 @@ class TwinWindow(QtWidgets.QWidget):
             main_row.addWidget(rh_holder, stretch=0, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
 
         root.addLayout(main_row, stretch=1)
+
+        # ---- yaw sectors: which note each sector plays, which one you point at ----
+        self.sector_bar = SectorBar(self.hands, self.live_controls)
+        root.addWidget(self.sector_bar)
 
         # ---- compact keyboard/control strip ---------------------------
         controls_row = QtWidgets.QHBoxLayout()
@@ -1149,6 +1386,9 @@ class TwinWindow(QtWidgets.QWidget):
 
         # ---- bottom threshold dock ------------------------------------
         self.threshold_panel = ThresholdPanel(self.live_controls)
+        self.threshold_panel.setMinimumWidth(0)
+        self.threshold_panel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored,
+                          QtWidgets.QSizePolicy.Policy.Preferred)
         root.addWidget(self.threshold_panel)
 
         # ---- hand visuals + two-hand link ------------------------------
@@ -1164,11 +1404,13 @@ class TwinWindow(QtWidgets.QWidget):
         self.position_anchor = {h: ANCHORS[h].copy() for h in self.hands}
         self.position_origin_ref = {h: None for h in self.hands}
         self.position_rezero_pending = {h: True for h in self.hands}
+        self._trail_align_deg = {h: None for h in self.hands}
         self._update_position_lock_button()
         self._update_gyro_lock_button()
         self._update_trace_hold_button()
         self.vibrato_btn.setEnabled(self.live_controls is not None)
         self._update_vibrato_button()
+        self.setMinimumSize(1100, 617)
 
     # ------------------------------------------------------------------
     # camera / command shortcuts
@@ -1188,6 +1430,10 @@ class TwinWindow(QtWidgets.QWidget):
             return
         for hand in self.hands:
             self.send_command_fn(hand, "RESET_POSITION")
+            self.position_origin_ref[hand] = None
+            self.position_rezero_pending[hand] = True
+            self.trails[hand].clear()
+            self._trail_align_deg[hand] = None
 
     def eventFilter(self, obj, event):
         if obj is self.view and event.type() == QtCore.QEvent.Type.KeyPress:
@@ -1244,12 +1490,14 @@ class TwinWindow(QtWidgets.QWidget):
                 self.position_origin_ref[hand] = None
                 self.position_rezero_pending[hand] = True
                 self.trails[hand].clear()
+                self._trail_align_deg[hand] = None
                 self.hand_states[hand].origin = self.position_anchor[hand].copy()
         else:
             for hand in self.hands:
                 self.position_origin_ref[hand] = None
                 self.position_rezero_pending[hand] = True
                 self.trails[hand].clear()
+                self._trail_align_deg[hand] = None
                 self.hand_states[hand].origin = self.position_anchor[hand].copy()
         self._update_position_lock_button()
         self._update_gyro_lock_button()
@@ -1325,10 +1573,24 @@ class TwinWindow(QtWidgets.QWidget):
         if "imu" not in sample:
             return
         imu = sample["imu"]
-        yaw_cal, pitch_cal, roll_cal = imu[0], imu[1], imu[2]
         i0, i1, i2 = imu[3:6] if len(imu) >= 6 else (list(imu[3:]) + [0, 0, 0])[:3]
-        yaw, pitch, roll = decode_ypr(yaw_cal, pitch_cal, roll_cal)
-        R = rotation_from_ypr(yaw, pitch, roll)
+        # Pose is the provider's, i.e. the FIRMWARE's: fw_ypr is the yaw/pitch/roll the
+        # stick itself reports (Mahony's Euler output -- what its display shows, and
+        # what RESET_YAW zeroes), R_render is the DCM of that same attitude, and
+        # position/velocity are NavEKF's rotated into the same frame. arm_ypr is the
+        # same attitude named for how the stick is worn (what the music reads). The
+        # twin derives nothing itself, so it cannot disagree with the firmware.
+        fw_ypr = sample.get("fw_ypr")
+        arm_ypr = sample.get("arm_ypr")
+        R_render = sample.get("R_render")
+        if fw_ypr is None:
+            # A frame that did not pass through a PoseProvider: same decode, same function.
+            _p = firmware_pose(imu)
+            if _p is None:
+                return
+            fw_ypr, arm_ypr, R_render = _p["fw_ypr"], _p["arm_ypr"], _p["R"]
+        yaw, pitch, roll = fw_ypr
+        R = R_render
         st = self.hand_states[hand]
         if self.gyro_lock and st.has_data:
             yaw, pitch, roll = st.yaw, st.pitch, st.roll
@@ -1337,9 +1599,12 @@ class TwinWindow(QtWidgets.QWidget):
                    if sample.get("sensor_type", 0) == 0
                    else np.zeros(3))
         sample_pos = np.array(sample["position"]) if "position" in sample else None
+        position_trustworthy = (bool(sample.get("nav_armed")) and
+                                sample_pos is not None and
+                                np.max(np.abs(sample_pos)) < MOTION_POS_RANGE_M)
         if self.position_lock:
             origin = self.position_anchor[hand].copy()
-        elif sample_pos is not None:
+        elif position_trustworthy:
             if self.position_rezero_pending[hand] or self.position_origin_ref[hand] is None:
                 self.position_origin_ref[hand] = sample_pos.copy()
                 self.position_rezero_pending[hand] = False
@@ -1350,7 +1615,12 @@ class TwinWindow(QtWidgets.QWidget):
         st.update_kinematics(yaw, pitch, roll, R, origin,
                               flex=sample.get("flex"), press=sample.get("press"),
                               velocity=velocity,
-                              accel_raw=accel, dt=dt)
+                              accel_raw=accel, dt=dt,
+                              mounting=sample.get("sensor_mounting", "firmware"))
+        st.position_trustworthy = position_trustworthy
+        st.arm_ypr = arm_ypr
+        st.motion = sample.get("motion")
+        self.sector_bar.set_hand(hand, st.motion)
         st.low_battery = bool(sample.get("low_battery", False))
         st.last_sample_wall_time = time.monotonic()
         self.hand_visuals[hand].update(st, list(self.trails[hand]), t, dt)
@@ -1369,6 +1639,22 @@ class TwinWindow(QtWidgets.QWidget):
         if hand in self.telemetry:
             self.telemetry[hand].set_effect(text)
         self.notification.show_event(hand, text)
+
+        if "use_yaw" in status:
+            self.sector_bar.set_use_yaw(status["use_yaw"])
+        notes = status.get("notes")
+        if notes is not None:
+            # playing_notes is one shared 3-slot ensemble (see
+            # app_jacob_choir.py), not per-hand data -- push the update to
+            # EVERY hand's HandState/panel so both stay in sync regardless
+            # of which hand's gesture actually changed a note, and so a
+            # NOTE STEP triggered by one hand still updates the other
+            # hand's persistent NOTES readout.
+            for h in self.hands:
+                self.hand_states[h].notes = notes
+                if h in self.telemetry:
+                    self.telemetry[h].set_notes(notes)
+            self.sector_bar.set_notes(notes)
 
         now = time.monotonic()
         st = self.hand_states[hand]
@@ -1403,15 +1689,25 @@ class TwinWindow(QtWidgets.QWidget):
             for s in samples:
                 if "imu" not in s:
                     continue
-                # position_lock ("orientation-only mode") intentionally
-                # freezes the rendered hand at its anchor -- don't let the
-                # trail keep drawing from the still-drifting raw position
-                # underneath it while locked.
-                if "position" in s and not self.position_lock and self.trace_hold:
-                    self.trails[hand].append(ANCHORS[hand] + np.array(s["position"]))
+                alignment = s.get("nav_align_deg")
+                previous_alignment = self._trail_align_deg[hand]
+                if alignment is not None and previous_alignment is not None:
+                    delta = np.radians(alignment - previous_alignment)
+                    if abs(delta) > np.radians(0.5) and self.trails[hand]:
+                        c, si = np.cos(delta), np.sin(delta)
+                        rotation = np.array([[c, -si, 0.0], [si, c, 0.0], [0.0, 0.0, 1.0]])
+                        anchor = ANCHORS[hand]
+                        self.trails[hand] = deque(
+                            [anchor + rotation @ (point - anchor) for point in self.trails[hand]],
+                            maxlen=None)
+                if alignment is not None:
+                    self._trail_align_deg[hand] = alignment
                 newest_imu_sample = s
             if newest_imu_sample is not None:
                 self._apply_sample_to_hand(hand, newest_imu_sample, t, dt)
+                if (self.trace_hold and not self.position_lock and
+                        self.hand_states[hand].position_trustworthy):
+                    self.trails[hand].append(self.hand_states[hand].origin.copy())
             elif self.position_lock:
                 # No fresh packet this tick for this hand (normal when two
                 # gloves share one BLE link and their samples interleave
@@ -1440,7 +1736,7 @@ def build_app_and_window(dataq=None, effect_q=None, hands=("l", "r"), send_comma
                           live_controls=None):
     """
     reader: a port_read.Reader, OR any object that wraps one (e.g. a
-    ChoirBaseApp/ChoirMovingWindow instance -- anything exposing .reader,
+    MusicApp instance (e.g. ChoirMovingWindow) -- anything exposing .reader,
     .viz_q or .dataq, .hands, .effect_q, .live_controls). When supplied,
     dataq/hands/effect_q/send_command_fn/live_controls are pulled from it
     automatically wherever the caller didn't already supply that argument
@@ -1456,15 +1752,31 @@ def build_app_and_window(dataq=None, effect_q=None, hands=("l", "r"), send_comma
     """
     if reader is not None:
         # Accept either a bare Reader (has .send_command directly) or a
-        # wrapper object that holds one as .reader (e.g. ChoirBaseApp).
+        # wrapper object that holds one as .reader (e.g. a MusicApp).
         send_command_source = reader if hasattr(reader, "send_command") else getattr(reader, "reader", None)
+        # A PoseProvider has no send_command of its own; its Reader does.
+        if send_command_source is not None and not hasattr(send_command_source, "send_command"):
+            send_command_source = getattr(send_command_source, "reader", None)
         if dataq is None:
             if hasattr(reader, "viz_q"):
                 dataq = reader.viz_q
             elif hasattr(reader, "dataq"):
                 dataq = reader.dataq
+            elif hasattr(reader, "subscribe_all"):
+                # A PoseProvider: private queue per hand, enriched frames.
+                # Never steals from any other subscriber.
+                dataq = reader.subscribe_all(maxsize=5, name="twin")
             elif hasattr(reader, "threads"):
-                dataq = {hand: reader.threads[hand]["parser"].getQ() for hand in reader.hands}
+                # A bare Reader. Reading its parser queues directly would
+                # compete with any other consumer of them (each Queue item
+                # goes to exactly ONE getter -- measured ~50/50 with two), so
+                # route through a PoseProvider instead. The caller must not
+                # also drain these queues; see core/pose_provider.py.
+                from core.pose_provider import PoseProvider
+                _provider = PoseProvider(reader=reader)
+                dataq = _provider.subscribe_all(maxsize=5, name="twin")
+                _provider.start(start_reader=False)
+                reader._twin_pose_provider = _provider   # keep alive; stopped with the reader
         if hands == ("l", "r") and hasattr(reader, "hands"):
             hands = reader.hands
         if effect_q is None and hasattr(reader, "effect_q"):
@@ -1492,10 +1804,19 @@ if __name__ == "__main__":
         },
         use_ble=True,
     )
+    from core.pose_provider import PoseProvider
+    pose = PoseProvider(reader=reader)
     reader.start_readers()
-    for hand in reader.hands:
-        reader.send_command(hand, "MOTION_STREAM_ON")
+    # Confirmed enables BEFORE the dispatchers exist (they would race the
+    # confirm for frames). Both streams, all hands, one timeout budget.
+    _res = pose.ensure_streams_all(motion=True, orientation=True)
+    for _h, _ok in _res.items():
+        if not _ok:
+            print(f"WARNING: hand '{_h}' did not confirm its streams -- its twin will stay blank.")
+    dataq = pose.subscribe_all(maxsize=5, name="twin")
+    pose.start(start_reader=False)
 
-    app, window = build_app_and_window(reader=reader)
-    app.aboutToQuit.connect(reader.stop_readers)
+    app, window = build_app_and_window(dataq=dataq, hands=tuple(reader.hands),
+                                       send_command_fn=reader.send_command)
+    app.aboutToQuit.connect(pose.stop)
     sys.exit(app.exec())
