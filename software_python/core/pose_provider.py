@@ -401,6 +401,27 @@ def pitch_step(offset, state, thresh_range, hysteresis, mode='directional'):
     return state, 0
 
 
+def pitch_step_degrees(offset_deg, state, trigger_deg=30.0,
+                       rearm_deg=20.0, mode='directional'):
+    """Generate one pitch step after crossing an absolute angle threshold.
+
+    Positive pitch above ``trigger_deg`` steps up; negative pitch below
+    ``-trigger_deg`` steps down. The gesture re-arms only after returning
+    inside ``+/-rearm_deg`` so holding a tilt cannot repeat steps.
+    """
+    if mode == 'legacy_latch':
+        return pitch_step(offset_deg, state, trigger_deg, 0.0, mode)
+    if state == 0:
+        if offset_deg > trigger_deg:
+            return 1, 1
+        if offset_deg < -trigger_deg:
+            return -1, -1
+        return 0, 0
+    if abs(offset_deg) < rearm_deg:
+        return 0, 0
+    return state, 0
+
+
 class LiveControls:
     """Thread-safe bridge for settings a UI (the digital twin) can change
     while the motion pipeline is already running in other threads. One
@@ -457,10 +478,12 @@ class MotionConfig:
     accel_trigger_hysteresis: int = 10
     roll_trigger_thresh_range: int = 20
     roll_trigger_hysteresis: int = 5
-    # Pitch step fires at (range+hyst) = 10 units = 14.2 deg from rest, legacy's
-    # 14.3 deg, and re-arms at `range` = 5 units = 7.1 deg.
+    # Pitch steps fire when the calibrated pitch offset crosses +/-30 degrees
+    # and re-arm after returning inside +/-20 degrees.
     pitch_trigger_thresh_range: int = 5
     pitch_trigger_hysteresis: int = 5
+    pitch_trigger_angle_deg: float = 30.0
+    pitch_trigger_rearm_deg: float = 20.0
     yaw_window: int = 10              # +/-10 units = +/-28.3 deg (yaw is 2.835 deg/unit)
     roll_depth_deadzone: int = 4      # units (~11 deg): zero depth inside
     roll_depth_saturation: int = 15   # units (~42 deg) past the dead zone for full depth
@@ -504,6 +527,8 @@ class MotionConfig:
             'roll_trigger_hysteresis': self.roll_trigger_hysteresis,
             'pitch_trigger_thresh_range': self.pitch_trigger_thresh_range,
             'pitch_trigger_hysteresis': self.pitch_trigger_hysteresis,
+            'pitch_trigger_angle_deg': self.pitch_trigger_angle_deg,
+            'pitch_trigger_rearm_deg': self.pitch_trigger_rearm_deg,
             'yaw_window': self.yaw_window,
             'press_thresh': self.finger_thresholds.get('press'),
             'flex_thresh': self.finger_thresholds.get('flex'),
@@ -650,7 +675,9 @@ class HandMotion:
         self._calibrating = False
         self._calibrated = False
         self._yaw0 = self._pitch0 = self._roll0 = REST_SCALED_DEFAULT
+        self._calibrated_pitch_deg = 0.0
         self._cal_y, self._cal_p, self._cal_r = [], [], []
+        self._cal_pitch_deg = []
         self._armed_at = None
         self._last_nav_armed = None
         self._have_pose = False
@@ -701,6 +728,7 @@ class HandMotion:
         with self._lock:
             self._calibrating = True
             self._cal_y, self._cal_p, self._cal_r = [], [], []
+            self._cal_pitch_deg = []
 
     def end_calibration(self):
         """Finish the window; returns the number of samples used. With zero
@@ -711,8 +739,10 @@ class HandMotion:
             n = len(self._cal_y)
             if n == 0:
                 self._yaw0 = self._pitch0 = self._roll0 = REST_SCALED_DEFAULT
+                self._calibrated_pitch_deg = 0.0
             else:
                 self._pitch0 = int(sum(self._cal_p) / n)        # pitch reflects: plain mean
+                self._calibrated_pitch_deg = float(sum(self._cal_pitch_deg) / n)
                 self._yaw0 = circular_mean_scaled(self._cal_y)   # yaw/roll wrap: circular mean
                 self._roll0 = circular_mean_scaled(self._cal_r)
             self._calibrated = True
@@ -755,6 +785,7 @@ class HandMotion:
                     self._cal_y.append(scale_wrapped180_deg(y))
                     self._cal_p.append(scale_bounded90_deg(p))
                     self._cal_r.append(scale_wrapped180_deg(r))
+                    self._cal_pitch_deg.append(float(p))
                 return self._emit(now, False, True, fstate, ())
 
             if 'arm_ypr' not in frame:
@@ -826,10 +857,11 @@ class HandMotion:
             if n != 0:
                 events.append(MotionEvent(self.hand, 'accel_burst', int(n), -1, sector))
             events.extend(fevents)
-            self._pitch_state, step = pitch_step(
-                scaled_pitch - self._pitch0, self._pitch_state,
-                self._t('pitch_trigger_thresh_range', cfg.pitch_trigger_thresh_range),
-                self._t('pitch_trigger_hysteresis', cfg.pitch_trigger_hysteresis),
+            pitch_offset_deg = pitch_deg - self._calibrated_pitch_deg
+            self._pitch_state, step = pitch_step_degrees(
+                pitch_offset_deg, self._pitch_state,
+                self._t('pitch_trigger_angle_deg', cfg.pitch_trigger_angle_deg),
+                self._t('pitch_trigger_rearm_deg', cfg.pitch_trigger_rearm_deg),
                 cfg.pitch_step_mode)
             if step != 0:
                 events.append(MotionEvent(self.hand, 'pitch_step', int(step), -1, sector))

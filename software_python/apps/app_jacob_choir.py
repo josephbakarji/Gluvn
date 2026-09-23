@@ -28,8 +28,9 @@ Performance recipe -- how the yaw sectors work when playing:
 
 Performer recipe: hold neutral during the 2 s calibration; flex the desired
 notes (right hand fills slots first, then left); strike a burst while aiming at
-the desired CENTER; hold press 3 and tilt at least 14.2 degrees to fire, then
-return inside 7.1 degrees to re-arm. CENTER is within +/-28.3 degrees of the
+the desired CENTER; hold press 3 and tilt beyond +30 degrees to step up or
+below -30 degrees to step down, then return inside +/-20 degrees to re-arm.
+CENTER is within +/-28.3 degrees of the
 strike heading, further RIGHT selects slot 0, and further LEFT selects slot 2.
 Yaw drifts without a magnetometer, so re-strike to re-center when needed.
 """
@@ -61,6 +62,7 @@ class ChoirMovingWindow(MusicApp):
                  accel_norm_max=15.0,
                  roll_trigger_thresh_range=20, roll_trigger_hysteresis=5,
                  pitch_trigger_thresh_range=5, pitch_trigger_hysteresis=5,
+                 pitch_trigger_angle_deg=30.0, pitch_trigger_rearm_deg=20.0,
                  yaw_window=10, vibrato_enabled=True,
                  pitch_step_mode='directional',
                  motion_config=None, **kwargs):
@@ -77,6 +79,8 @@ class ChoirMovingWindow(MusicApp):
                 pitch_trigger_thresh_range=pitch_trigger_thresh_range,
                 pitch_trigger_hysteresis=pitch_trigger_hysteresis,
                 yaw_window=yaw_window, pitch_step_mode=pitch_step_mode,
+                pitch_trigger_angle_deg=pitch_trigger_angle_deg,
+                pitch_trigger_rearm_deg=pitch_trigger_rearm_deg,
                 vibrato_enabled=vibrato_enabled,
                 calibration_window_sec=self.CALIBRATION_WINDOW_SEC)
         super().__init__(*args, motion_config=motion_config, **kwargs)

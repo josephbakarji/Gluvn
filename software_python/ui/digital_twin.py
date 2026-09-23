@@ -821,26 +821,12 @@ class TelemetryPanel(QtWidgets.QWidget):
         self.fsr_bars = self._make_bars(outer, "#ff7f5f")
 
         outer.addWidget(self._divider())
-        notes_hdr = QtWidgets.QLabel("NOW PLAYING   \u25b6 = pointed sector")
-        notes_hdr.setStyleSheet("color:#7fcc9a; font: bold 12px 'Consolas',monospace;")
-        outer.addWidget(notes_hdr)
-        self._notes = None
-        self._active_slot = None
-        self.notes_lbl = QtWidgets.QLabel("\u2014")
-        self.notes_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.notes_lbl.setStyleSheet("color:#9fffc0; font: bold 30px 'Consolas','Menlo',monospace;")
-        # QLabel under-reports the height of multi-line rich text at a stylesheet font
-        # size (it clipped the third line), so reserve it: 3 lines x ~43 px.
-        self.notes_lbl.setFixedHeight(130)
-        outer.addWidget(self.notes_lbl)
-
-        outer.addWidget(self._divider())
         self._effect_history = deque(maxlen=4)   # most-recent-first; short so the panel stays uncluttered
 
         self.effect_lbl = QtWidgets.QLabel("effect: \u2014")
         self.effect_lbl.setWordWrap(True)
         self.effect_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.effect_lbl.setStyleSheet("color:#ffd75f; font: 13px 'Consolas','Menlo',monospace;")
+        self.effect_lbl.setStyleSheet("color:#ffd75f; font: bold 18px 'Consolas','Menlo',monospace;")
         outer.addWidget(self.effect_lbl)
         self.setStyleSheet("background:#161821; border-radius:6px;")
         self.setMinimumWidth(210)
@@ -882,7 +868,6 @@ class TelemetryPanel(QtWidgets.QWidget):
         self.orient_lbl.setText(f"fw   Y{st.yaw:+7.1f} P{st.pitch:+6.1f} R{st.roll:+6.1f}")
         if st.arm_ypr is not None:
             self.arm_lbl.setText(f"arm        P{st.arm_ypr[1]:+6.1f} R{st.arm_ypr[2]:+6.1f} (music)")
-        self._set_active_from(st.motion)
         ox, oy, oz = st.origin
         self.pos_lbl.setText(f"pos   x{ox:+5.2f} y{oy:+5.2f} z{oz:+5.2f}")
         if st.velocity is not None:
@@ -917,32 +902,6 @@ class TelemetryPanel(QtWidgets.QWidget):
                 fade = max(180 - i * 45, 70)   # dims with age
                 lines.append(f'<span style="color:#{fade:02x}{fade:02x}70;">&nbsp;&nbsp;{safe}</span>')
         self.effect_lbl.setText("<br>".join(lines))
-
-    def set_notes(self, notes):
-        """Persistent 'NOW PLAYING' readout: one line per slot, big. Unlike
-        set_effect's fading history it always shows the CURRENT ensemble."""
-        self._notes = list(notes) if notes else None
-        self._render_notes()
-
-    def _set_active_from(self, motion):
-        slot = sector_slot(motion)
-        if slot != self._active_slot:
-            self._active_slot = slot
-            self._render_notes()
-
-    def _render_notes(self):
-        if not self._notes:
-            self.notes_lbl.setText("\u2014")
-            return
-        lines = []
-        for i, n in enumerate(self._notes):
-            name = "\u2014" if n in (None, "N/A") else html.escape(str(n))
-            if i == self._active_slot:
-                lines.append(f'<span style="color:#ffd75f;">\u25b6 [{i}] {name}</span>')
-            else:
-                lines.append(f'<span style="color:#9fffc0;">&nbsp;&nbsp; [{i}] {name}</span>')
-        self.notes_lbl.setText("<br>".join(lines))
-
 
 # Yaw sectors. The provider's HandMotion.yaw_sector is 0 (yaw below the window),
 # 1 (inside it) or -1 (above it); the choir indexes playing_notes with it, and a
@@ -1093,7 +1052,7 @@ class EffectNotification(QtWidgets.QWidget):
         self.banner.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.banner.setStyleSheet(
             "background: rgba(20,22,30,210); color:#ffd75f; "
-            "font: bold 20px 'Consolas','Menlo',monospace; "
+            "font: bold 26px 'Consolas','Menlo',monospace; "
             "border-radius: 10px; padding: 10px 22px;"
         )
         layout.addWidget(self.banner, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
@@ -1113,7 +1072,7 @@ class EffectNotification(QtWidgets.QWidget):
         self.banner.setText(f"\u2726 GESTURE DETECTED [{HAND_NAMES.get(hand, '?')}] \u2726\n{text}")
         self.banner.setStyleSheet(
             f"background: rgba(20,22,30,220); color:{css}; "
-            "font: bold 20px 'Consolas','Menlo',monospace; "
+            "font: bold 26px 'Consolas','Menlo',monospace; "
             "border-radius: 10px; padding: 10px 22px;"
         )
         self._anim.stop()
@@ -1161,13 +1120,13 @@ class ThresholdPanel(QtWidgets.QWidget):
         # every key below in ChoirMovingWindow.__init__ and those values win (see
         # get_threshold(key, default) in __init__). Keep these equal to the
         # choir's __main__ constants so a standalone twin shows what would run.
-        # pitch: fires at range+hyst = 10 units = 14.2 deg, re-arms at 5 units.
+        # pitch: fires beyond +/-30 degrees, re-arms inside +/-20 degrees.
         ('accel_trigger_thresh', 'accel trigger thresh', 0, 127, 110),
         ('accel_trigger_hysteresis', 'accel hysteresis', 0, 40, 10),
         ('roll_trigger_thresh_range', 'roll thresh range', 0, 63, 20),
         ('roll_trigger_hysteresis', 'roll hysteresis', 0, 30, 5),
-        ('pitch_trigger_thresh_range', 'pitch thresh range', 0, 63, 5),
-        ('pitch_trigger_hysteresis', 'pitch hysteresis', 0, 30, 5),
+        ('pitch_trigger_angle_deg', 'pitch trigger angle', 0, 90, 30),
+        ('pitch_trigger_rearm_deg', 'pitch re-arm angle', 0, 60, 20),
         ('yaw_window', 'yaw window', 0, 63, 10),
         ('press_thresh', 'press thresh', 0, 255, 20),
         ('press_hysteresis', 'press hysteresis', 0, 40, 5),
@@ -1637,8 +1596,6 @@ class TwinWindow(QtWidgets.QWidget):
             # hand's persistent NOTES readout.
             for h in self.hands:
                 self.hand_states[h].notes = notes
-                if h in self.telemetry:
-                    self.telemetry[h].set_notes(notes)
             self.sector_bar.set_notes(notes)
 
         now = time.monotonic()
