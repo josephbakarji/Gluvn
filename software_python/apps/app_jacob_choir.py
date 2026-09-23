@@ -220,9 +220,8 @@ if __name__ == "__main__":
     ACCEL_NORM_MAX = 15.0   # m/s^2 (~1.5g). LOWER this first if bursts are hard to trigger.
     ROLL_TRIGGER_THRESH_RANGE = 20
     ROLL_TRIGGER_HYSTERESIS = 5
-    # Pitch maps +/-90 deg onto 127 units = 1.417 deg/unit. Note-step FIRES at
-    # (range + hyst) = 10 units = 14.2 deg from rest -- legacy fired at 14.3 deg --
-    # and RE-ARMS at `range` = 5 units = 7.1 deg.
+    # Pitch steps fire beyond +/-30 degrees from the calibrated rest pose and
+    # re-arm inside +/-20 degrees.
     PITCH_TRIGGER_THRESH_RANGE = 5
     PITCH_TRIGGER_HYSTERESIS = 5
     # Yaw maps +/-180 deg onto 127 units = 2.835 deg/unit: 10 units = +/-28.3 deg.

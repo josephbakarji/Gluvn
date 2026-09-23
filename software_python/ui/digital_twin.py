@@ -865,9 +865,11 @@ class TelemetryPanel(QtWidgets.QWidget):
         return bars
 
     def update(self, st: HandState):
-        self.orient_lbl.setText(f"fw   Y{st.yaw:+7.1f} P{st.pitch:+6.1f} R{st.roll:+6.1f}")
         if st.arm_ypr is not None:
-            self.arm_lbl.setText(f"arm        P{st.arm_ypr[1]:+6.1f} R{st.arm_ypr[2]:+6.1f} (music)")
+            self.orient_lbl.setText(
+                f"hand Y{st.arm_ypr[0]:+7.1f} P{st.arm_ypr[1]:+6.1f} R{st.arm_ypr[2]:+6.1f}"
+            )
+            self.arm_lbl.setText(f"sensor     P{st.pitch:+6.1f} R{st.roll:+6.1f}")
         ox, oy, oz = st.origin
         self.pos_lbl.setText(f"pos   x{ox:+5.2f} y{oy:+5.2f} z{oz:+5.2f}")
         if st.velocity is not None:

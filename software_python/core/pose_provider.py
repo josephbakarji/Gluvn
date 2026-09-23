@@ -56,8 +56,8 @@ position     NavEKF position/velocity/lin_accel, as sent, rotated about Z into t
 velocity     display frame (see MotionConfig.align_nav_to_display); originals
 lin_accel    kept as position_nav / velocity_nav / lin_accel_nav. Only meaningful
              while nav_armed.
-arm_ypr      fw_ypr, exactly (see "Orientation" section below for why no remap
-             is applied).
+arm_ypr      anatomical naming for the worn glove: yaw is unchanged, firmware
+             roll is arm pitch, and firmware pitch is arm roll.
 
 MOTION PIPELINE -- what a music app gets, and what it must not do
 ------------------------------------------------------------------
@@ -73,15 +73,11 @@ or read a parser queue. Lifecycle is bring_up() -> calibrate() -> consume.
 
 SENSOR -> ARM ORIENTATION (defined below, in the "Orientation" section)
 -----------------------------------------------------------------------
-No remap is applied: yaw, pitch and roll are read out with the firmware's own
-sign and naming (MahonyAHRS::computeEuler's convention), unchanged --
-arm_ypr is numerically identical to fw_ypr. This is a deliberate, single
-default rather than a configurable mounting system: the stick's physical
-orientation on the wrist is one fixed fact, not a per-hand or per-session
-choice, and "no correction" is the only default consistent with "decode the
-firmware's numbers exactly, faithfully" (see euler_arm_deg for the
-verification). If a genuine mounting-dependent correction is ever needed, it
-belongs here, as a single constant -- not as a multi-option config surface.
+The firmware values remain available unchanged as fw_ypr. arm_ypr swaps only
+pitch and roll because the measured wearing orientation exchanges those axes;
+this is the anatomical contract consumed by music logic and telemetry. The
+render matrix remains the raw firmware attitude, so the mesh is not rotated by
+the naming correction.
 Applied identically to both hands: mirror handedness of a left glove is a
 rendering concern (twin finger spread), not an attitude one.
 """
@@ -134,12 +130,10 @@ def euler_arm_deg(qw, qx, qy, qz):
     pitch forearm elevation, +up, +/-90 (reflects, no wrap)
     roll  supination about the forearm long axis, +/-180 (true wrap)
 
-    Exactly MahonyAHRS::computeEuler's formulas on the unmodified attitude:
-    no axis remap, no sign flips. arm_ypr is therefore numerically identical
-    to fw_ypr (verified: max diff <1e-12 deg over 2000 random attitudes) --
-    kept as its own function, rather than reusing fw_ypr directly, so a
-    single well-justified correction has one place to live if the physical
-    mounting is ever found to need one.
+    The glove is worn with the sensor pitch and roll axes exchanged relative
+    to the performer's anatomical axes. Firmware values remain unchanged;
+    arm_ypr swaps only pitch and roll so all musical consumers use the natural
+    hand axes.
     """
     r00 = 1.0 - 2.0 * (qy * qy + qz * qz)
     r10 = 2.0 * (qx * qy + qw * qz)
@@ -151,7 +145,7 @@ def euler_arm_deg(qw, qx, qy, qz):
     yaw = np.degrees(np.arctan2(r10, r00))
     pitch = -np.degrees(np.arcsin(s))
     roll = np.degrees(np.arctan2(r21, r22))
-    return float(yaw), float(pitch), float(roll)
+    return float(yaw), float(roll), float(pitch)
 
 
 def rotation_render_from_quat(qw, qx, qy, qz):
@@ -188,8 +182,9 @@ def pose_from_quat(qw, qx, qy, qz):
                   applies to the sensor-frame mesh (see
                   rotation_render_from_quat for why this is NOT remapped).
     """
+    pose = euler_arm_deg(qw, qx, qy, qz)
     return {
-        "ypr_deg": euler_arm_deg(qw, qx, qy, qz),
+        "ypr_deg": pose,
         "R": rotation_render_from_quat(qw, qx, qy, qz),
     }
 
@@ -858,9 +853,10 @@ class HandMotion:
                 events.append(MotionEvent(self.hand, 'accel_burst', int(n), -1, sector))
             events.extend(fevents)
             pitch_offset_deg = pitch_deg - self._calibrated_pitch_deg
+            pitch_trigger_deg = self._t('pitch_trigger_angle_deg', cfg.pitch_trigger_angle_deg)
             self._pitch_state, step = pitch_step_degrees(
                 pitch_offset_deg, self._pitch_state,
-                self._t('pitch_trigger_angle_deg', cfg.pitch_trigger_angle_deg),
+                pitch_trigger_deg,
                 self._t('pitch_trigger_rearm_deg', cfg.pitch_trigger_rearm_deg),
                 cfg.pitch_step_mode)
             if step != 0:
