@@ -16,6 +16,16 @@ Gesture -> sound (finger numbers are 1-based here, 0-based in code):
   press 4 held             -> volume delta from pitch rate-of-change (aftertouch)
   press 5                  -> all notes off
 
+Performance recipe -- how the yaw sectors work when playing:
+  Strike (accel burst) to re-center yaw: wherever the forearm is aimed at that
+  instant becomes CENTER (slot 1), and a small window (default +/-28.3 degrees,
+  MotionConfig.yaw_window) is drawn around it. Turning the forearm further
+  RIGHT than that window selects slot 0; further LEFT selects slot 2. With
+  press 3 held, tilting the forearm up or down steps the note assigned to
+  WHICHEVER slot you are currently pointed at (up = +1 in the scale, down =
+  -1). Because yaw drifts without a magnetometer, re-strike whenever the
+  sectors feel off-center -- that is the only way to re-anchor them.
+
 Performer recipe: hold neutral during the 2 s calibration; flex the desired
 notes (right hand fills slots first, then left); strike a burst while aiming at
 the desired CENTER; hold press 3 and tilt at least 14.2 degrees to fire, then
@@ -52,8 +62,7 @@ class ChoirMovingWindow(MusicApp):
                  roll_trigger_thresh_range=20, roll_trigger_hysteresis=5,
                  pitch_trigger_thresh_range=5, pitch_trigger_hysteresis=5,
                  yaw_window=10, vibrato_enabled=True,
-                 pitch_step_mode='directional', sensor_mounting='firmware',
-                 pitch_sign=1,
+                 pitch_step_mode='directional',
                  motion_config=None, **kwargs):
         # The motion parameters below are core's (MotionConfig). They stay
         # accepted here so existing launch code keeps working; pass your own
@@ -68,8 +77,6 @@ class ChoirMovingWindow(MusicApp):
                 pitch_trigger_thresh_range=pitch_trigger_thresh_range,
                 pitch_trigger_hysteresis=pitch_trigger_hysteresis,
                 yaw_window=yaw_window, pitch_step_mode=pitch_step_mode,
-                sensor_mounting=sensor_mounting,
-                pitch_sign=pitch_sign,
                 vibrato_enabled=vibrato_enabled,
                 calibration_window_sec=self.CALIBRATION_WINDOW_SEC)
         super().__init__(*args, motion_config=motion_config, **kwargs)

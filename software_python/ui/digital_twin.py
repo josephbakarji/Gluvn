@@ -121,22 +121,10 @@ PALM_LAT_SEGS, PALM_LON_SEGS = 6, 12
 SKIN_BASE = np.array([0.85, 0.70, 0.58])
 
 # --------------------------------------------------------------------
-# Hand/finger sensor geometry (box-local frame; rigidly attached to the
-# wrist's R -- see module docstring's HAND GEOMETRY note)
+# Hand/finger sensor geometry (box-local frame; rigidly attached to the# wrist's R -- see module docstring's HAND GEOMETRY note)
 # --------------------------------------------------------------------
 PALM_FORWARD_LOCAL = np.array([0.0, 1.0, 0.0])
 CURL_LOCAL_AXIS = np.array([0.0, 0.0, -1.0])
-
-
-def mounting_mesh_basis(mounting):
-    """Map the hand template (+Y fingers) into the configured sensor frame."""
-    if mounting == "fingers_along_x":
-        return np.array([[0.0, -1.0, 0.0],
-                         [1.0, 0.0, 0.0],
-                         [0.0, 0.0, 1.0]])
-    if mounting == "firmware_rot180":
-        return np.diag([-1.0, -1.0, 1.0])
-    return np.eye(3)
 
 # anatomical Y-axis anchors relative to the M5Stick center (0.0)
 JUNCTION_Y = 0.08
@@ -399,7 +387,6 @@ class HandState:
         self.yaw = self.pitch = self.roll = 0.0
         self.R = np.eye(3)
         self.mesh_R = np.eye(3)
-        self.mounting = "firmware"
         self.origin = ANCHORS[hand].copy()
         self.flex = None
         self.press = None
@@ -427,11 +414,10 @@ class HandState:
         self.position_trustworthy = False
 
     def update_kinematics(self, yaw, pitch, roll, R, origin, flex, press,
-                           velocity, accel_raw, dt, mounting="firmware"):
+                           velocity, accel_raw, dt):
         self.yaw, self.pitch, self.roll = yaw, pitch, roll
         self.R, self.origin = R, origin
-        self.mounting = mounting
-        self.mesh_R = R @ mounting_mesh_basis(mounting)
+        self.mesh_R = R
         self.flex, self.press = flex, press
         self.velocity = velocity
         self.accel_raw = accel_raw
@@ -842,10 +828,10 @@ class TelemetryPanel(QtWidgets.QWidget):
         self._active_slot = None
         self.notes_lbl = QtWidgets.QLabel("\u2014")
         self.notes_lbl.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.notes_lbl.setStyleSheet("color:#9fffc0; font: bold 24px 'Consolas','Menlo',monospace;")
+        self.notes_lbl.setStyleSheet("color:#9fffc0; font: bold 30px 'Consolas','Menlo',monospace;")
         # QLabel under-reports the height of multi-line rich text at a stylesheet font
-        # size (it clipped the third line), so reserve it: 3 lines x ~30 px.
-        self.notes_lbl.setFixedHeight(100)
+        # size (it clipped the third line), so reserve it: 3 lines x ~43 px.
+        self.notes_lbl.setFixedHeight(130)
         outer.addWidget(self.notes_lbl)
 
         outer.addWidget(self._divider())
@@ -977,7 +963,7 @@ class SectorBar(QtWidgets.QWidget):
     ORDER = (2, 1, 0)                                  # left -> right on screen
     NAMES = {2: "LEFT", 1: "CENTER", 0: "RIGHT"}
     UNITS_TO_DEG = 360.0 / 127.0                       # yaw is 127 units per turn
-    ROW_H = 78     # 2 rows + caption = 184 px: the whole window must still fit a 1080p screen
+    ROW_H = 96     # 2 rows + caption = 224 px: still comfortably fits a 1080p screen
     ACTIVE, ACTIVE_TXT, IDLE, IDLE_TXT = "#2ee6a6", "#06140e", "#1c1f2b", "#c9d1e0"
 
     def __init__(self, hands, live_controls=None, parent=None):
@@ -1059,7 +1045,7 @@ class SectorBar(QtWidgets.QWidget):
             p.drawRoundedRect(box, 10, 10)
             txt = QtGui.QColor(self.ACTIVE_TXT if lit else self.IDLE_TXT)
             p.setPen(txt)
-            p.setFont(self._font(13))
+            p.setFont(self._font(16))
             p.drawText(box.adjusted(10, 3, -10, 0), QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft,
                        f"[{slot}] {self.NAMES[slot]}")
             note = self.notes[slot] if self.notes and slot < len(self.notes) else None
@@ -1068,8 +1054,8 @@ class SectorBar(QtWidgets.QWidget):
             note = "\u2014" if note in (None, "N/A") else str(note)
             # The note is centred and the slot label sits in the corner, so the note may use
             # the whole box height; only its width limits it.
-            px = max(20, min(56, int(box_h - 6)))
-            while px > 16 and QtGui.QFontMetrics(self._font(px)).horizontalAdvance(note) > box_w - 24:
+            px = max(20, min(72, int(box_h - 6)))
+            while px > 20 and QtGui.QFontMetrics(self._font(px)).horizontalAdvance(note) > box_w - 24:
                 px -= 2
             p.setFont(self._font(px))
             p.drawText(box, QtCore.Qt.AlignmentFlag.AlignCenter, note)
@@ -1615,8 +1601,7 @@ class TwinWindow(QtWidgets.QWidget):
         st.update_kinematics(yaw, pitch, roll, R, origin,
                               flex=sample.get("flex"), press=sample.get("press"),
                               velocity=velocity,
-                              accel_raw=accel, dt=dt,
-                              mounting=sample.get("sensor_mounting", "firmware"))
+                              accel_raw=accel, dt=dt)
         st.position_trustworthy = position_trustworthy
         st.arm_ypr = arm_ypr
         st.motion = sample.get("motion")

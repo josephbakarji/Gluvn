@@ -44,16 +44,20 @@ samples.
 
 ORIENTATION AND POSITION SOURCE (firmware is the truth; this file only relays it)
 ------------------------------------------------------------------------------
-orientation  Mahony's Euler output, imu[0:3], decoded exactly (fw_ypr). Valid from
-             the first frame, matches the stick's display, honours RESET_YAW.
-             The NavEKF quaternion is NOT used: it is the identity until the EKF
-             arms and after every navEkf.reset() (incl. enabling the streams).
+orientation  Mahony's Euler output (fw_ypr), decoded exactly from the firmware's
+             own yaw_cal/pitch_cal/roll_cal fields -- port_read.py's parser packs
+             these three into sample['imu'][0:3], which is what firmware_pose()
+             decodes here (decode_mahony_euler is the exact inverse of the
+             firmware's quantiser). Valid from the first frame, matches the
+             stick's display, honours RESET_YAW. The NavEKF quaternion is NOT
+             used for orientation: it is the identity until the EKF arms and
+             after every navEkf.reset() (incl. enabling the streams).
 position     NavEKF position/velocity/lin_accel, as sent, rotated about Z into the
 velocity     display frame (see MotionConfig.align_nav_to_display); originals
 lin_accel    kept as position_nav / velocity_nav / lin_accel_nav. Only meaningful
              while nav_armed.
-arm_ypr      the same attitude named for how the stick is worn
-             (MotionConfig.sensor_mounting); 'firmware' = no renaming.
+arm_ypr      fw_ypr, exactly (see "Orientation" section below for why no remap
+             is applied).
 
 MOTION PIPELINE -- what a music app gets, and what it must not do
 ------------------------------------------------------------------
@@ -69,38 +73,17 @@ or read a parser queue. Lifecycle is bring_up() -> calibrate() -> consume.
 
 SENSOR -> ARM ORIENTATION (defined below, in the "Orientation" section)
 -----------------------------------------------------------------------
-The M5StickC IMU is worn with its long axis on sensor +Y (fingers point +Y,
-screen normal +Z). Firmware (MahonyAHRS.computeEuler / NavEKF quatToDCM) and
-every downstream consumer name angles with the aerospace convention
-R = Rz(yaw) Ry(pitch) Rx(roll), i.e. they implicitly assume the long axis is
-body +X. Consequence without correction:
-
-    raise forearm      -> firmware ROLL   changes   (should be pitch)
-    supinate hand      -> firmware PITCH  changes   (should be roll)
-
-Every consumer must see the SAME correction, so it is applied once, here,
-per frame, and nowhere else.
-
-The correction: conjugate the attitude by the fixed axis map C
-(v_arm = C v_sensor):
-
-        [0 1 0]
-    C = [1 0 0]     det(C) = +1  (proper rotation: 180 deg about (1,1,0)/sqrt2)
-        [0 0 -1]
-
-Unique proper signed permutation satisfying: fingers (+Y_s) -> +X_arm,
-raise -> +pitch, supinate -> +roll (verified by exhaustive search over the 24
-proper signed permutations).
-
-    R_arm = C R_sensor C^T
-    quaternion vector part:  (x, y, z) -> (y, x, -z),  w unchanged
-    Z_arm points DOWN in the world frame after conjugation, so Euler yaw comes
-    out negated; it is re-negated in euler_arm_deg() so yaw stays
-    counter-clockwise-positive seen from above (same sign as legacy).
-
-Hand-independence: applied identically to both hands. Mirror handedness of a
-left glove is a rendering concern (twin finger spread), not an attitude one --
-a mirrored glove rotates the same way as a non-mirrored one.
+No remap is applied: yaw, pitch and roll are read out with the firmware's own
+sign and naming (MahonyAHRS::computeEuler's convention), unchanged --
+arm_ypr is numerically identical to fw_ypr. This is a deliberate, single
+default rather than a configurable mounting system: the stick's physical
+orientation on the wrist is one fixed fact, not a per-hand or per-session
+choice, and "no correction" is the only default consistent with "decode the
+firmware's numbers exactly, faithfully" (see euler_arm_deg for the
+verification). If a genuine mounting-dependent correction is ever needed, it
+belongs here, as a single constant -- not as a multi-option config surface.
+Applied identically to both hands: mirror handedness of a left glove is a
+rendering concern (twin finger spread), not an attitude one.
 """
 
 from __future__ import annotations
@@ -116,7 +99,6 @@ import time
 import numpy as np
 
 from core.port_read import Reader
-from core.hand_diag import HandDiag
 
 
 Vector3 = Tuple[float, float, float]
@@ -124,21 +106,9 @@ Quaternion = Tuple[float, float, float, float]
 
 
 # ===========================================================================
-# Orientation: sensor frame -> arm frame
-# (rationale and derivation of C are in the module docstring above)
+# Orientation: firmware attitude -> arm-frame angles
+# (rationale is in the module docstring above)
 # ===========================================================================
-
-# v_arm = C @ v_sensor
-C_SENSOR_TO_ARM = np.array([[0.0, 1.0, 0.0],
-                            [1.0, 0.0, 0.0],
-                            [0.0, 0.0, -1.0]])
-
-
-def quat_sensor_to_arm(qw, qx, qy, qz):
-    """Sensor-frame attitude quaternion -> arm-frame attitude quaternion.
-    Conjugation by C on the vector part; w is invariant."""
-    return qw, qy, qx, -qz
-
 
 def rotation_matrix_from_quat(qw, qx, qy, qz):
     """Body-to-world DCM, same convention as NavEKF quatToDCM /
@@ -157,61 +127,36 @@ def rotation_matrix_from_quat(qw, qx, qy, qz):
                      [r20, r21, r22]])
 
 
-MOUNTINGS = ('firmware', 'firmware_rot180', 'fingers_along_x', 'fingers_along_y')
-DEFAULT_MOUNTING = 'firmware'
-
-
-def per_hand(value, hand, default=None):
-    """Resolve a scalar config value or a hand-keyed mapping."""
-    if isinstance(value, dict):
-        return value.get(hand, default)
-    return value
-
-
-def euler_arm_deg(qw, qx, qy, qz, mounting=DEFAULT_MOUNTING):
-    """Sensor-frame quaternion -> (yaw, pitch, roll) in DEGREES, arm frame.
+def euler_arm_deg(qw, qx, qy, qz):
+    """Firmware-frame quaternion -> (yaw, pitch, roll) in DEGREES, arm frame.
 
     yaw   about world up, CCW-positive from above, +/-180 (true wrap)
     pitch forearm elevation, +up, +/-90 (reflects, no wrap)
     roll  supination about the forearm long axis, +/-180 (true wrap)
 
-    Same formulas as MahonyAHRS::computeEuler on the corrected quaternion,
-    then yaw re-negated (see module docstring).
+    Exactly MahonyAHRS::computeEuler's formulas on the unmodified attitude:
+    no axis remap, no sign flips. arm_ypr is therefore numerically identical
+    to fw_ypr (verified: max diff <1e-12 deg over 2000 random attitudes) --
+    kept as its own function, rather than reusing fw_ypr directly, so a
+    single well-justified correction has one place to live if the physical
+    mounting is ever found to need one.
     """
-    if mounting == 'fingers_along_x':
-        # Sensor frame IS the arm frame, so no axis remap and yaw/roll keep the
-        # firmware's sign. Pitch does NOT: the firmware's world is Z-up (the
-        # accelerometer reads +1 g on Z at rest), which makes its own pitch
-        # positive when the long axis points DOWN. Flip it so both mountings
-        # deliver the same contract: +pitch = forearm raised.
-        aw, ax, ay, az, yaw_sign, pitch_sign = qw, qx, qy, qz, 1.0, 1.0
-    elif mounting == 'firmware_rot180':
-        # The stick's screen normal is unchanged, but its X/Y sensor axes are
-        # reversed. Conjugating by Rz(pi) restores the shared physical frame.
-        aw, ax, ay, az, yaw_sign, pitch_sign = qw, -qx, -qy, qz, 1.0, -1.0
-    elif mounting == 'firmware':
-        # Pure pass-through: the firmware's own formulas (MahonyAHRS::computeEuler)
-        # on the unmodified attitude -- no remap, no sign flips.
-        aw, ax, ay, az, yaw_sign, pitch_sign = qw, qx, qy, qz, 1.0, -1.0
-    else:
-        aw, ax, ay, az = quat_sensor_to_arm(qw, qx, qy, qz)
-        yaw_sign, pitch_sign = -1.0, -1.0   # Z_arm points down after conjugation
-    r00 = 1.0 - 2.0 * (ay * ay + az * az)
-    r10 = 2.0 * (ax * ay + aw * az)
-    r20 = 2.0 * (ax * az - aw * ay)
-    r21 = 2.0 * (ay * az + aw * ax)
-    r22 = 1.0 - 2.0 * (ax * ax + ay * ay)
+    r00 = 1.0 - 2.0 * (qy * qy + qz * qz)
+    r10 = 2.0 * (qx * qy + qw * qz)
+    r20 = 2.0 * (qx * qz - qw * qy)
+    r21 = 2.0 * (qy * qz + qw * qx)
+    r22 = 1.0 - 2.0 * (qx * qx + qy * qy)
 
     s = min(max(r20, -1.0), 1.0)
-    yaw = yaw_sign * np.degrees(np.arctan2(r10, r00))
-    pitch = pitch_sign * np.degrees(np.arcsin(s))
+    yaw = np.degrees(np.arctan2(r10, r00))
+    pitch = -np.degrees(np.arcsin(s))
     roll = np.degrees(np.arctan2(r21, r22))
     return float(yaw), float(pitch), float(roll)
 
 
 def rotation_render_from_quat(qw, qx, qy, qz):
     """DCM to draw the sensor-frame mesh. This is intentionally the RAW
-    firmware attitude, with NO mounting remap.
+    firmware attitude, with no correction of any kind.
 
     Verified numerically (2000 random attitudes, max error 1.2e-14): the
     twin's existing Euler->scipy 'ZYX' render reproduces the firmware
@@ -219,9 +164,9 @@ def rotation_render_from_quat(qw, qx, qy, qz):
     never wrong. The mesh is authored in the sensor frame (fingers +Y) and
     the firmware quaternion is world<-sensor, so no correction belongs here.
 
-    The mounting correction is an ANGLE-NAMING fix only: it changes which
-    Euler angle is called pitch vs roll for the trigger logic and the
-    telemetry readout. Applying C to the render matrix would rotate the
+    The pitch-sign flip in euler_arm_deg is an ANGLE-NAMING fix only: it
+    does not change which rotation happened, only what the trigger logic and
+    telemetry call it. Applying it to the render matrix would rotate the
     drawn hand away from the real one.
     """
     return rotation_matrix_from_quat(qw, qx, qy, qz)
@@ -233,8 +178,8 @@ def rotation_render_from_quat(qw, qx, qy, qz):
 # attaches the result, so no consumer ever re-derives angles or rotations.
 # ---------------------------------------------------------------------------
 
-def pose_from_quat(qw, qx, qy, qz, mounting=DEFAULT_MOUNTING):
-    """Everything a consumer needs from one nav_quat, computed once.
+def pose_from_quat(qw, qx, qy, qz):
+    """Everything a consumer needs from one attitude quaternion, computed once.
 
     Returns a dict:
         ypr_deg : (yaw, pitch, roll) in DEGREES, arm frame -- what trigger
@@ -244,7 +189,7 @@ def pose_from_quat(qw, qx, qy, qz, mounting=DEFAULT_MOUNTING):
                   rotation_render_from_quat for why this is NOT remapped).
     """
     return {
-        "ypr_deg": euler_arm_deg(qw, qx, qy, qz, mounting),
+        "ypr_deg": euler_arm_deg(qw, qx, qy, qz),
         "R": rotation_render_from_quat(qw, qx, qy, qz),
     }
 
@@ -254,15 +199,19 @@ def pose_from_quat(qw, qx, qy, qz, mounting=DEFAULT_MOUNTING):
 # Firmware truth: decode what the stick actually sends
 # ---------------------------------------------------------------------------
 #
-# ORIENTATION comes from Mahony's Euler output (imu[0:3] on the wire), NOT from
-# the NavEKF quaternion. Reasons, all from the firmware sources:
+# ORIENTATION comes from Mahony's Euler output, NOT from the NavEKF
+# quaternion. Reasons, all from the firmware sources:
 #   * NavEKF's quaternion is the identity until the EKF arms (NavEKF::reset()
 #     sets it to 1,0,0,0) and is reset again by RESET_POSITION, the stick's
 #     button, a gyro recalibration, AND by enabling MOTION/NAV_QUAT streams
 #     (buildAndSendFrame's navEkfNeeded rising edge). The firmware sends it
 #     regardless, so it is garbage exactly when a session starts.
-#   * imu[0:3] is what the stick's own display shows, is valid from the first
-#     frame, and honours RESET_YAW (ahrs.resetYaw()) -- the legacy choir used it.
+#   * The firmware's yaw_cal/pitch_cal/roll_cal fields are what the stick's
+#     own display shows, are valid from the first frame, and honour
+#     RESET_YAW (ahrs.resetYaw()) -- the legacy choir used them. port_read.py
+#     decodes these three wire fields and packs them as sample['imu'][0:3]
+#     (matching the legacy imu-list convention); decode_mahony_euler below
+#     undoes exactly that encoding.
 # NavEKF is used only for what only it provides: position, velocity and
 # gravity-free linear acceleration, gated on nav_armed.
 
@@ -288,22 +237,20 @@ def quat_from_fw_euler(yaw_deg, pitch_deg, roll_deg):
             cr * cp * sy - sr * sp * cy)
 
 
-def firmware_pose(imu, mounting=DEFAULT_MOUNTING, pitch_sign=1):
+def firmware_pose(imu):
     """The single decode of a frame's orientation.
 
     ``imu`` is the parser's six-value imu list. Returns None if unusable, else
       fw_ypr   the firmware's own (yaw, pitch, roll) degrees, exactly as sent
-      arm_ypr  the same attitude named per ``mounting`` (equal to fw_ypr for
-               'firmware'); this is what music apps read
+      arm_ypr  the same attitude with the fixed pitch-sign correction applied
+               (see the module docstring); this is what music apps read
       R        world<-sensor DCM of the firmware attitude, for rendering
     """
     if imu is None or len(imu) < 3:
         return None
     fw = decode_mahony_euler(imu[0], imu[1], imu[2])
-    pose = pose_from_quat(*quat_from_fw_euler(*fw), mounting=mounting)
-    arm_ypr = pose["ypr_deg"]
-    arm_ypr = (arm_ypr[0], pitch_sign * arm_ypr[1], arm_ypr[2])
-    return {"fw_ypr": fw, "arm_ypr": arm_ypr, "R": pose["R"]}
+    pose = pose_from_quat(*quat_from_fw_euler(*fw))
+    return {"fw_ypr": fw, "arm_ypr": pose["ypr_deg"], "R": pose["R"]}
 
 
 def wrap180(angle_deg):
@@ -518,12 +465,6 @@ class MotionConfig:
     roll_depth_deadzone: int = 4      # units (~11 deg): zero depth inside
     roll_depth_saturation: int = 15   # units (~42 deg) past the dead zone for full depth
     pitch_step_mode: str = 'directional'
-    # Physical mounting fact. 'firmware' is the documented pass-through and is
-    # the default: no angle is renamed or sign-flipped. Other values are opt-in
-    # hypotheses produced by tools/mounting_check.py.
-    sensor_mounting: object = DEFAULT_MOUNTING
-    # +1 preserves legacy firmware parity; -1 reverses musical pitch stepping.
-    pitch_sign: object = 1
     # Position/velocity/lin_accel come from NavEKF's world frame; orientation
     # from Mahony's display frame. The firmware documents that RESET_YAW does
     # NOT touch NavEKF's frame, so after a reset they differ by a yaw. Rotate
@@ -546,12 +487,6 @@ class MotionConfig:
     vibrato_enabled: bool = True      # the twin's roll-depth toggle (LiveControls)
 
     def __post_init__(self):
-        mountings = self.sensor_mounting.values() if isinstance(self.sensor_mounting, dict) else (self.sensor_mounting,)
-        if any(m not in MOUNTINGS for m in mountings):
-            raise ValueError(f"sensor_mounting must use values from {MOUNTINGS}, got {self.sensor_mounting!r}")
-        signs = self.pitch_sign.values() if isinstance(self.pitch_sign, dict) else (self.pitch_sign,)
-        if any(s not in (-1, 1) for s in signs):
-            raise ValueError(f"pitch_sign must use -1 or 1, got {self.pitch_sign!r}")
         if self.pitch_step_mode not in ('directional', 'legacy_latch'):
             raise ValueError("pitch_step_mode must be 'directional' or 'legacy_latch', "
                              f"got {self.pitch_step_mode!r}")
@@ -1033,6 +968,107 @@ class _PoseRequest:
             self._provider._release(self._hand, self._motion, self._orientation)
 
 
+class HandDiag:
+    """Per-hand runtime health report, owned by PoseProvider (its only caller).
+
+    Not called directly. Pass ``diagnostics=True`` to MusicApp (or
+    PoseProvider) and the provider feeds it from its dispatcher threads, so
+    EVERY app gets the report every 2 s:
+
+        app = ChoirMovingWindow(..., diagnostics=True)
+
+    One line per hand:
+      fps          frames/s dispatched by the provider
+      no_imu/no_la frames missing the imu slot / lin_accel (a stream not enabled or not confirmed)
+      armed%       fraction of frames with nav_armed True (NavEKF's position/accel are only
+                   meaningful while armed)
+      accel_pk     peak windowed accel this interval (0-127) vs the burst threshold: tells you
+                   whether a strike is too weak or the burst path is starved
+      fw y/p/r     the FIRMWARE's own yaw/pitch/roll, unmodified
+      head/tilt/twist   the same angles named for the arm (see euler_arm_deg above --
+                   arm_ypr is currently identical to fw_ypr; see its docstring)
+      press/flex   max raw value seen this interval (do this hand's finger channels move?)
+
+    TO CHECK YOUR MOUNTING (20 seconds): raise your forearm and lower it. `tilt` must rise
+    and fall while `twist` stays put; rotate your wrist and `twist` must move while `tilt`
+    stays put. If they are swapped or `tilt` falls when you raise, the stick is worn
+    differently than assumed in the module docstring's "SENSOR -> ARM ORIENTATION" note --
+    see there for what to change.
+    """
+
+    def __init__(self, hands, interval_sec=2.0, enabled=True):
+        self.hands = list(hands)
+        self.interval = interval_sec
+        self.enabled = enabled
+        self._t0 = time.monotonic()
+        self._reset()
+        self._fw = {h: None for h in self.hands}
+        self._arm = {h: None for h in self.hands}
+
+    def _reset(self):
+        z = lambda v=0: {h: v for h in self.hands}
+        self.n = z()
+        self.no_imu = z()
+        self.no_la = z()
+        self.armed = z()
+        self.armed_seen = z()
+        self.accel_pk = z(0)
+        self.press_max = {h: [0] * 5 for h in self.hands}
+        self.flex_max = {h: [0] * 5 for h in self.hands}
+
+    def frame(self, hand, d):
+        if not self.enabled or hand not in self.n:
+            return
+        self.n[hand] += 1
+        if 'imu' not in d:
+            self.no_imu[hand] += 1
+        if 'lin_accel' not in d:
+            self.no_la[hand] += 1
+        if 'nav_armed' in d:
+            self.armed_seen[hand] += 1
+            self.armed[hand] += bool(d['nav_armed'])
+        for key, store in (('press', self.press_max), ('flex', self.flex_max)):
+            vals = d.get(key)
+            if vals is not None:
+                for i, v in enumerate(vals[:5]):
+                    if v > store[hand][i]:
+                        store[hand][i] = v
+
+    def accel(self, hand, scaled):
+        if self.enabled and hand in self.accel_pk and scaled > self.accel_pk[hand]:
+            self.accel_pk[hand] = scaled
+
+    def angles(self, hand, fw_ypr, arm_ypr):
+        if self.enabled and hand in self._fw:
+            self._fw[hand], self._arm[hand] = fw_ypr, arm_ypr
+
+    def maybe_report(self, accel_thresh):
+        if not self.enabled:
+            return
+        now = time.monotonic()
+        dt = now - self._t0
+        if dt < self.interval:
+            return
+        lines = [f"[diag {dt:.1f}s] burst fires when accel_pk > {accel_thresh}"]
+        for h in self.hands:
+            n = self.n[h]
+            if n == 0:
+                lines.append(f"  {h.upper()}: NO FRAMES reached the provider this interval")
+                continue
+            armed = (100.0 * self.armed[h] / self.armed_seen[h]) if self.armed_seen[h] else float('nan')
+            fw, ar = self._fw[h], self._arm[h]
+            ang = ("angles n/a" if fw is None else
+                   f"fw y/p/r={fw[0]:+6.1f}/{fw[1]:+6.1f}/{fw[2]:+6.1f}  "
+                   f"head={ar[0]:+6.1f} tilt={ar[1]:+6.1f} twist={ar[2]:+6.1f}")
+            lines.append(
+                f"  {h.upper()}: fps={n / dt:5.1f} no_imu={self.no_imu[h]} no_la={self.no_la[h]} "
+                f"armed={armed:5.1f}% accel_pk={self.accel_pk[h]:3d} {ang} "
+                f"press_max={self.press_max[h]} flex_max={self.flex_max[h]}")
+        print("\n".join(lines))
+        self._t0 = now
+        self._reset()
+
+
 class PoseProvider:
     """Reference-counted pose stream manager around one ``Reader``.
 
@@ -1451,25 +1487,22 @@ class PoseProvider:
     def enrich(self, hand: str, sample: dict, now: Optional[float] = None) -> dict:
         """Shallow-copy ``sample`` and attach the firmware's pose.
 
-        Adds: hand; fw_ypr (firmware's own yaw/pitch/roll); arm_ypr (per
-        config.sensor_mounting; what apps read); R_render (world<-sensor DCM of
-        the firmware attitude); and, in the display frame, position / velocity /
-        lin_accel (the NavEKF originals stay as *_nav) plus nav_align_deg.
+        Adds: hand; fw_ypr (firmware's own yaw/pitch/roll); arm_ypr (the fixed
+        pitch-sign correction applied; what apps read); R_render (world<-sensor
+        DCM of the firmware attitude); and, in the display frame, position /
+        velocity / lin_accel (the NavEKF originals stay as *_nav) plus
+        nav_align_deg.
 
         Public so offline/replay code can run recorded frames through the exact
         path the live dispatcher uses.
         """
         frame = dict(sample)
         frame["hand"] = hand
-        mounting = per_hand(self.config.sensor_mounting, hand, DEFAULT_MOUNTING)
-        pitch_sign = per_hand(self.config.pitch_sign, hand, 1)
-        pose = firmware_pose(frame.get("imu"), mounting, pitch_sign)
+        pose = firmware_pose(frame.get("imu"))
         if pose is not None:
             frame["fw_ypr"] = pose["fw_ypr"]
             frame["arm_ypr"] = pose["arm_ypr"]
             frame["R_render"] = pose["R"]
-            frame["sensor_mounting"] = mounting
-            frame["pitch_sign"] = pitch_sign
         delta = self._nav_alignment(hand, frame, time.monotonic() if now is None else now)
         frame["nav_align_deg"] = delta
         for key in ("position", "velocity", "lin_accel"):
