@@ -79,10 +79,12 @@
  *   PREFS_SAVE            persist flex/press/accel calibration to NVS. Gyro bias is
  *                         never persisted (runtime-only, always).
  *   SET_CAL:H:TYPE:v0,v1,v2,v3,v4   (flex/press: 5 comma-separated ints)
- *   SET_CAL:H:GYRO_BIAS:gx,gy,gz    (3 floats, deg/s — H parsed but unused, bias is hand-independent)
  *   SET_CAL:H:ACCEL_BIAS:ax,ay,az   (3 floats, g)
  *     H = R | L
- *     TYPE = MIN_FLEX | MAX_FLEX | MIN_PRESS | MAX_PRESS | GYRO_BIAS | ACCEL_BIAS
+ *     TYPE = MIN_FLEX | MAX_FLEX | MIN_PRESS | MAX_PRESS | ACCEL_BIAS
+ *   GYRO_BIAS is intentionally NOT host-settable: it is solved exclusively by
+ *   RECALIBRATE_GYRO (runStartupGyroCalibration), session-only, never persisted.
+ *   SET_CAL:H:GYRO_BIAS is still accepted but rejected as a stub for compatibility.
  */
 
 #include <M5Unified.h>
@@ -118,8 +120,8 @@ const float         MAX_NAV_GAP_SEC     = 0.5f;   // discard pathological gaps; 
 const unsigned long DISPLAY_INTERVAL_MS = 200;    // 5 Hz
 
 // Power management
-const uint8_t  DISPLAY_BRIGHTNESS_ACTIVE = 60;
-const uint8_t  DISPLAY_BRIGHTNESS_DIM    = 10;
+const uint8_t  DISPLAY_BRIGHTNESS_ACTIVE = 100;
+const uint8_t  DISPLAY_BRIGHTNESS_DIM    = 100;
 const unsigned long DISPLAY_DIM_AFTER_MS = 15000;
 const unsigned long BATTERY_POLL_MS      = 5000;
 const int      LOW_BATTERY_PCT           = 15;
@@ -606,26 +608,11 @@ void processCommand(String cmd) {
       String vals = cmd.substring(c2 + 1);
 
       if (type == "GYRO_BIAS") {
-        float gb[3]; int vi = 0, start = 0;
-        for (int i = 0; i <= (int)vals.length() && vi < 3; i++) {
-          if (i == (int)vals.length() || vals[i] == ',') {
-            gb[vi++] = vals.substring(start, i).toFloat();
-            start = i + 1;
-          }
-        }
-        if (vi < 3) { Serial.println("SET_CAL_PARSE_ERR"); return; }
-
-        const float GYRO_BIAS_SANITY_LIMIT_DPS = 50.0f;   // generous MPU6886 zero-rate offset bound
-        for (int i = 0; i < 3; i++) {
-          if (fabsf(gb[i]) > GYRO_BIAS_SANITY_LIMIT_DPS) {
-            Serial.println("SET_CAL_GYRO_BIAS_RANGE_ERR");
-            return;
-          }
-        }
-
-        for (int i = 0; i < 3; i++) ACTIVE_GYRO_BIAS[i] = gb[i];
-        ahrs.setGyroBias(0.0f, 0.0f, 0.0f);
-        Serial.println("SET_GYRO_BIAS_OK");
+        // Removed: gyro bias is solved exclusively by runStartupGyroCalibration()
+        // (RECALIBRATE_GYRO) and is deliberately session-only/non-persisted.
+        // A host-writable path here created two uncoordinated sources of truth
+        // for ACTIVE_GYRO_BIAS. Use RECALIBRATE_GYRO instead.
+        Serial.println("SET_CAL_GYRO_BIAS_REMOVED_USE_RECALIBRATE_GYRO");
         return;
       }
 
@@ -741,55 +728,52 @@ void updateDisplay() {
 
   canvas.fillSprite(BLACK);
 
-  // Status bar
-  if (bleConnected) {
-    canvas.fillRect(0, 0, 132, 16, GREEN);
-    canvas.setTextColor(BLACK, GREEN);
-    canvas.setCursor(2, 0);
-    canvas.printf("BLE CONN [%c]", toupper(hand));
-  } else {
-    canvas.fillRect(0, 0, 132, 16, RED);
-    canvas.setTextColor(WHITE, RED);
-    canvas.drawString("BLE ADVERT ", 2, 0);
-  }
-
+  // Glove identity — always visible regardless of connection state
   canvas.setTextColor(WHITE, BLACK);
-  canvas.setCursor(144, 0);
-  canvas.printf("BAT:%3d%%", battery);
+  canvas.setTextSize(2);
+  canvas.setCursor(6, 4);
+  canvas.print(hand == 'r' ? "Gluvn Right" : "Gluvn Left");
 
-  canvas.drawFastHLine(0, 18, 240, WHITE);
-
-  // Mode line
-  canvas.setCursor(2, 24);
-  canvas.setTextColor(YELLOW);
-  canvas.print("MODE:");
-  canvas.setTextColor(WHITE);
-  canvas.print(calibration_mode ? "CALIB" : "STREAM");
-
-  // Nav status line
-  canvas.setCursor(2, 68);
-  canvas.setTextColor(CYAN);
-  if (resetNotice) {
-    canvas.print("RESET OK");
-  } else if (navState == 0) {
-    canvas.print("NAV IDLE");
-  } else if (navState == 1) {
-    canvas.print("NAV ARM");
+  // Status bar — connection state
+  if (bleConnected) {
+    canvas.fillRect(0, 26, 240, 34, GREEN);
+    canvas.setTextColor(BLACK, GREEN);
+    canvas.setTextSize(3);
+    canvas.setCursor(6, 30);
+    canvas.print("CONNECTED");
   } else {
-    canvas.print("NAV ON");
+    canvas.fillRect(0, 26, 240, 34, RED);
+    canvas.setTextColor(WHITE, RED);
+    canvas.setTextSize(3);
+    canvas.setCursor(6, 30);
+    canvas.print("ADVERTISING");
   }
-  canvas.setTextColor(WHITE);
 
-  // Attitude readout
-  canvas.setCursor(2, 90);
-  canvas.setTextColor(ORANGE);
-  canvas.print("IMU :");
-  canvas.setTextColor(WHITE);
-  canvas.printf("P%5.1f R%5.1f", pitch, roll);
+  // Battery — always visible
+  canvas.setTextColor(battery >= 0 && battery <= LOW_BATTERY_PCT ? RED : WHITE, BLACK);
+  canvas.setTextSize(3);
+  canvas.setCursor(30, 66);
+  if (battery >= 0) {
+    canvas.printf("BAT %3d%%", battery);
+  } else {
+    canvas.print("BAT ---");
+  }
 
-  canvas.setCursor(2, 112);
-  canvas.setTextColor(WHITE);
-  canvas.printf("     Y%5.1f", yaw);
+  // Reset confirmation — transient, own row, doesn't displace battery
+  if (resetNotice) {
+    canvas.setTextColor(CYAN, BLACK);
+    canvas.setTextSize(2);
+    canvas.setCursor(30, 96);
+    canvas.print("POSE RESET");
+  }
+
+  // Button legend — always visible, bottom of screen
+  canvas.setTextColor(WHITE, BLACK);
+  canvas.setTextSize(1);
+  canvas.setCursor(6, 116);
+  canvas.print("SHORT PRESS: reset pose");
+  canvas.setCursor(6, 126);
+  canvas.print("LONG PRESS (1s): recal gyro");
 
   canvas.pushSprite(0, 0);
 }
@@ -917,8 +901,15 @@ void setup() {
   // Mahony's detector adapts attitude bias; NavEKF owns the authoritative
   // navigation stationary flag and ZUPT timing.
   ahrs.setVarianceWindowTimeConstant(0.05f);
-  delay(400);   // brief splash hold before calibration UI takes over
-  runStartupGyroCalibration();
+  // Startup gyro calibration removed: the host's bring_up() sequence
+  // (Reader.start_readers -> ensure_fresh_gyro_calibration) already forces
+  // a fresh RECALIBRATE_GYRO before any session streams data, and the
+  // long-press path (see button legend) covers manual re-cal otherwise.
+  // Running it here too only delayed BLE advertising by ~3-4s for a
+  // calibration nothing was yet connected to consume.
+  // NOTE: bypassing the host's bring_up() (e.g. a bare serial/BLE client
+  // that skips ensure_fresh_gyro_calibration) will leave ACTIVE_GYRO_BIAS
+  // at its last value (zero on a cold boot) until RECALIBRATE_GYRO runs.
 
   M5.Display.fillScreen(BLACK);
 
@@ -1021,7 +1012,10 @@ void loop() {
   // quaternion telemetry, or either diagnostic stream. Reset once on a
   // rising edge so the 0.3s arm window starts fresh, not from stale state.
   static bool navEkfWasNeeded = false;
-  navEkfNeeded = send_motion || send_nav_quat || nav_diagnostics || sys_diagnostics;
+  // Diagnostics (nav_diagnostics/sys_diagnostics) intentionally excluded:
+  // they're an offline debugging aid, not a normal-operation data path.
+  // Estimators now wake only for actual consumers (motion/nav_quat stream).
+  navEkfNeeded = send_motion || send_nav_quat;
   if (navEkfNeeded && !navEkfWasNeeded) {
     navEkf.reset();
   }
@@ -1068,17 +1062,21 @@ void loop() {
       if (usableDt && gyroFinite && accelFinite) {
         diagNoteDt(dt, true);
 
-        ahrs.updateIMU(gx, gy, gz, ax, ay, az, dt);
-        ahrs.getEuler(yaw, pitch, roll);
-
-        float navQ0, navQ1, navQ2, navQ3;
-        ahrs.getQuaternion(navQ0, navQ1, navQ2, navQ3);
-        diagNoteMahonyQuat(navQ0, navQ1, navQ2, navQ3);
-
-        float navBgx, navBgy, navBgz;
-        ahrs.getGyroBias(navBgx, navBgy, navBgz);
-
+        // Mahony now gated the same as NavEKF: its output (yaw/pitch/roll,
+        // quaternion, gyro bias feed into NavEKF) has no consumer unless
+        // something needs nav output. Previously ran unconditionally at
+        // 100 Hz regardless of BLE-connected/streaming state.
         if (navEkfNeeded) {
+          ahrs.updateIMU(gx, gy, gz, ax, ay, az, dt);
+          ahrs.getEuler(yaw, pitch, roll);
+
+          float navQ0, navQ1, navQ2, navQ3;
+          ahrs.getQuaternion(navQ0, navQ1, navQ2, navQ3);
+          diagNoteMahonyQuat(navQ0, navQ1, navQ2, navQ3);
+
+          float navBgx, navBgy, navBgz;
+          ahrs.getGyroBias(navBgx, navBgy, navBgz);
+
           diagEkfTimingBegin();
           navEkf.update(gx, gy, gz, ax, ay, az, dt,
                         navQ0, navQ1, navQ2, navQ3,
@@ -1086,9 +1084,9 @@ void loop() {
                         ahrs.getAccelConfidence());
           diagEkfTimingEnd();
           diagNoteNavEkfState(navEkf);
-        }
 
-        diagPrintNavLineIfDue(ahrs, navEkf, ax, ay, az, roll, pitch, write_binary, sampleUs);
+          diagPrintNavLineIfDue(ahrs, navEkf, ax, ay, az, roll, pitch, write_binary, sampleUs);
+        }
       }
     } else {
       diagNoteImuMissed();
