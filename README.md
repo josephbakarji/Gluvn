@@ -294,6 +294,15 @@ Same binary protocol as original GLUVN, available on USB-C port for:
 - **[docs/Notes/USER_CONFIGURABLE_PARAMETERS.md](docs/Notes/USER_CONFIGURABLE_PARAMETERS.md)** - Tuning and parameter reference
 - **[software_python/apps/examples/README.md](software_python/apps/examples/README.md)** - Current app examples and GUI usage
 
+### Technical Design Notes
+
+The project also includes technical reference material covering the embedded firmware and host software stack:
+
+- Firmware documentation covering calibration strategy, embedded diagnostics, protocol framing, and wireless telemetry behavior
+- Software documentation covering transport parsing, pose interpretation, note mapping, app logic, and MIDI output
+- Packet-loss and bandwidth analysis for BLE/USB performance validation and real-time reliability checks
+
+These notes should be kept alongside the source tree and are useful when reviewing system behavior, debugging signal quality, or preparing implementation reports.
 
 ## 🔧 Configuration & Tuning
 
