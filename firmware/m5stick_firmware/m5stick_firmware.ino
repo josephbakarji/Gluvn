@@ -901,15 +901,9 @@ void setup() {
   // Mahony's detector adapts attitude bias; NavEKF owns the authoritative
   // navigation stationary flag and ZUPT timing.
   ahrs.setVarianceWindowTimeConstant(0.05f);
-  // Startup gyro calibration removed: the host's bring_up() sequence
-  // (Reader.start_readers -> ensure_fresh_gyro_calibration) already forces
-  // a fresh RECALIBRATE_GYRO before any session streams data, and the
-  // long-press path (see button legend) covers manual re-cal otherwise.
-  // Running it here too only delayed BLE advertising by ~3-4s for a
-  // calibration nothing was yet connected to consume.
-  // NOTE: bypassing the host's bring_up() (e.g. a bare serial/BLE client
-  // that skips ensure_fresh_gyro_calibration) will leave ACTIVE_GYRO_BIAS
-  // at its last value (zero on a cold boot) until RECALIBRATE_GYRO runs.
+  // Gyro calibration is initiated by the host before streaming or by the
+  // long-press path; delaying advertising for an unused startup calibration
+  // would make the device unavailable during connection setup.
 
   M5.Display.fillScreen(BLACK);
 
@@ -922,9 +916,6 @@ void setup() {
   pinMode(MUX_SIG, INPUT);
   analogSetPinAttenuation(MUX_SIG, ADC_11db);
   analogReadResolution(12);
-
-  loadCalibrationFromPrefs();
-  setHandPointers();
 
   bleCommandQueue = xQueueCreate(BLE_CMD_QUEUE_LEN, sizeof(BleCmdMsg));
   NimBLEDevice::init(hand == 'r' ? "Gluvn_R" : "Gluvn_L");

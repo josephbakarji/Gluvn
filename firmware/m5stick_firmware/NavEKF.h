@@ -90,11 +90,6 @@ public:
         blockBiasCorrectionFromGravityUpdate_ = false;   // ablation switch, default off -- see member comment
     }
 
-    void resetPosition()
-    {
-        pNav_[0] = pNav_[1] = pNav_[2] = 0.0f;
-    }
-
     void update(
         float gx, float gy, float gz,
         float ax, float ay, float az,
@@ -113,16 +108,8 @@ public:
         // suppress its own fix (large fLinearBody -> "must be moving" ->
         // distrust the very correction that would fix it).
         //
-        // Tried switching this to qNav_ once armed: more accurate during one
-        // dynamic maneuver in testing, but reverted -- unlike the gated
-        // updates (which bypass after N rejections), this stationary
-        // decision has no recovery mechanism. If qNav_ ever misreads
-        // "moving" while actually still, nothing corrects it, since ZUPT --
-        // the one fix that could help -- is exactly what gets suppressed.
-        // Confirmed in testing: a table-slide test diverged to tens of km
-        // before this was reverted. mahonyQ can't be corrupted by NavEKF's
-        // own compounding error, which matters more here than the accuracy
-        // edge during dynamics.
+        // Use Mahony's attitude for this detector so NavEKF cannot suppress
+        // the ZUPT correction that would recover a drifting navigation state.
         updateOwnStationaryDetector(gx, gy, gz, ax, ay, az, dt,
                          mahonyQ0, mahonyQ1, mahonyQ2, mahonyQ3);
         bool bothStationary = ownStationary_;
@@ -200,11 +187,7 @@ public:
     {
         float R[3][3];
         quatToDCM(qNav0_, qNav1_, qNav2_, qNav3_, R);
-        // body gravity = R^T*[0,0,1] = THIRD ROW of R, not the third column
-        // (R*[0,0,1], "which way +Z points in world" -- a different quantity
-        // that only matches at zero tilt). Verified by brute-force R^T and a
-        // physical check: tilt 90deg about Y so body +X points down (world
-        // -Z); accel X must then read -1g, which only the row formula gives.
+        // Body gravity is R^T*[0,0,1], the third row of the body-to-world DCM.
         gx = R[2][0];
         gy = R[2][1];
         gz = R[2][2];
@@ -817,11 +800,8 @@ private:
         float Rnav[3][3];
         quatToDCM(qNav0_, qNav1_, qNav2_, qNav3_, Rnav);
         // body gravity = R^T*[0,0,1] = THIRD ROW of the body-to-world DCM
-        // (was third column -- R*[0,0,1] -- a different quantity that only
-        // agrees at zero tilt; the old formula fed this update a
-        // gravity-direction target with the wrong horizontal sign whenever
-        // the device wasn't level). See getPredictedBodyGravity() for the
-        // full derivation.
+        // The third column represents world +Z in world coordinates and is
+        // not the gravity vector expressed in the body frame.
         float gx = Rnav[2][0], gy = Rnav[2][1], gz = Rnav[2][2];
 
         // For R_true = R_nom Exp(dtheta), a_hat - g_hat = [g_hat]x dtheta.
@@ -862,9 +842,8 @@ private:
         lastGravityLinAccelTrust_ = linTrust;
 
         // Both accelConfidence (magnitude) and linTrust (direction) must be
-        // high for full trust. Floor 0.05*0.05=0.0025 matches the old
-        // accelConfidence-alone floor, now reachable by either factor
-        // collapsing; kept strictly positive so vectorNoiseStd stays finite.
+        // high for full trust. Keep the lower bound positive so
+        // vectorNoiseStd remains finite.
         float confidence = constrain(accelConfidence * linTrust, 0.0025f, 1.0f);
         float vectorNoiseStd = sinf(attitudeMeasNoiseStd_) / sqrtf(confidence);
         float s2 = vectorNoiseStd * vectorNoiseStd;

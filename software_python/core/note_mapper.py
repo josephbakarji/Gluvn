@@ -334,12 +334,3 @@ class NoteMapper:
         # Last resort: first window
         return note_windows[0], 0
 
-
-if __name__ == "__main__":
-    mapper = NoteMapper(root_note='C', scale='major')
-    window_trigger, note_windows = mapper.moving_window(num_rhf=5, num_lhf=5)
-    for i in range(window_trigger.shape[0]):
-        print(window_trigger[i, :])
-        names = [mapper.midi2note[note] for note in note_windows[i, :]]
-        print(names)
-        print("---")

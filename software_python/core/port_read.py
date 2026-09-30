@@ -10,7 +10,6 @@ data_analysis.py, not here — this module only depends on it lazily, inside
 Reader.make_reader_threads(), and only when parse_file is actually used.
 """
 
-from __future__ import division
 from core.__init__ import (
     BLE_NAME_L, BLE_NAME_R, NUS_TX_CHAR_UUID, NUS_RX_CHAR_UUID,
     portL, portR, baud, EXPDIR
@@ -51,7 +50,6 @@ class Reader:
         self.ble_loop_thread = BleLoopThread()
 
         self.threads = self.make_reader_threads()
-        self.printers = self.make_printer_threads()
 
     def make_reader_threads(self):
         time0 = time.time()
@@ -233,23 +231,6 @@ class Reader:
                 print(f"Warning: [{hand.upper()}] saw {len(seen)} distinct hand-byte "
                       f"values on its own queue this session: {sorted(seen)} -- "
                       f"this indicates cross-hand contamination upstream of the parser.")
-
-    def make_printer_threads(self):
-        return {hand: printSens(self.threads[hand]['parser'].getQ()) for hand in self.hands}
-
-    def start_printers(self):
-        for hand in self.hands:
-            self.printers[hand].start()
-
-    def stop_printers(self):
-        for hand in self.hands:
-            self.printers[hand].join(timeout=1)
-
-    def run_sensors(self):
-        self.start_readers()
-        input('Running — press Enter to stop.\n')
-        print('Stopping...')
-        self.stop_readers()
 
     def send_command(self, hand, cmd):
         try:

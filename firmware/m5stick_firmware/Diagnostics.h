@@ -261,8 +261,6 @@ inline void diagPrintSysLine(MahonyAHRS &ahrs, NavEKF &navEkf) {
     float pMinDiag, pMaxDiag;
     navEkf.getCovarianceDiagRange(pMinDiag, pMaxDiag);
 
-    uint32_t pBlowupCount; int pBlowupIdx; float pBlowupVal;
-
     float pVarActual = navEkf.getPositionVarianceMax();
     float pVarExpected = navEkf.getExpectedPositionVarFromNoise();
     float vVarActual = navEkf.getVelocityVarianceMax();
@@ -288,7 +286,6 @@ inline void diagPrintSysLine(MahonyAHRS &ahrs, NavEKF &navEkf) {
         "imu_fresh=%u,imu_missed=%u,dt_reject=%u,dt_under2ms=%u,dt_min=%.5f,dt_max=%.5f,dt_reject_max=%.5f,"
         "nan_gyro=%u,nan_accel=%u,nan_mahony=%u,nan_navekf=%u,"
         "mahonyQnorm=%.5f,navQnorm=%.5f,Pdiag_min=%.3e,Pdiag_max=%.3e,"
-        "Pblowup_count=%u,Pblowup_idx=%d,Pblowup_val=%.3e,"
         "armed=%d,t_since_zupt=%.3f,zupt_starved=%d,pvar_actual=%.4e,pvar_expected=%.4e,"
         "vvar_actual=%.4e,vvar_expected=%.4e,"
         "ba_clamp=%u,bg_clamp=%u,"
@@ -313,7 +310,6 @@ inline void diagPrintSysLine(MahonyAHRS &ahrs, NavEKF &navEkf) {
         (unsigned)diagNanGyroCount, (unsigned)diagNanAccelCount,
         (unsigned)diagNanMahonyCount, (unsigned)diagNanNavEkfCount,
         mahonyQNorm, navQNorm, pMinDiag, pMaxDiag,
-        (unsigned)pBlowupCount, pBlowupIdx, pBlowupVal,
         (int)navEkf.isArmed(), tSinceZupt, (int)navEkf.isZuptStarved(), pVarActual, pVarExpected,
         vVarActual, vVarExpected,
         (unsigned)accelClampCount, (unsigned)gyroClampCount,

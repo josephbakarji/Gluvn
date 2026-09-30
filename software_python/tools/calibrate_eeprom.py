@@ -3,10 +3,14 @@ GLUVN Real-Time Calibration Tool — BLE
 M5StickC Plus 1.1 — 12-bit ADC
 """
 
-import sys, time, os, threading
+import sys
+import time
+import os
+import queue
+import threading
 import numpy as np
-from core.port_read import ReadSerial, ReadBLE, Reader
-from core.__init__ import portR, portL, baud, BLE_NAME_R, BLE_NAME_L, mainDir, figDir
+from core.port_read import Reader
+from core.__init__ import BLE_NAME_R, BLE_NAME_L
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QGroupBox,
@@ -232,17 +236,13 @@ class CalibrationTool(QMainWindow):
                 self.reader = None
                 time.sleep(1.0)
 
-            # Always attempt both hands — Reader handles missing devices gracefully.
-            # NOTE: message_format/length_checksum removed — Reader.__init__() has
-            # no such parameters (ParseSerial's frame parsing is self-describing);
-            # passing them raised a silent TypeError caught by the except below,
-            # which is what broke connect/reconnect.
+            # Always attempt both hands; Reader handles missing devices gracefully.
             self.reader = Reader(
                 sensor_config={
                     'r': {'flex': True, 'press': True, 'imu': True},
                     'l': {'flex': True, 'press': True, 'imu': True},
                 },
-                save=False, use_ble=True
+                use_ble=True
             )
             self.reader.start_readers()
 
@@ -357,13 +357,12 @@ class CalibrationTool(QMainWindow):
             self.reader = None
             time.sleep(0.8)
 
-            # message_format/length_checksum removed — see _connect_all_bg for why.
             self.reader = Reader(
                 sensor_config={
                     'r': {'flex': True, 'press': True, 'imu': True},
                     'l': {'flex': True, 'press': True, 'imu': True},
                 },
-                save=False, use_ble=True
+                use_ble=True
             )
             self.reader.start_readers()
 
@@ -453,7 +452,6 @@ class CalibrationTool(QMainWindow):
         self.recorded    = []
         self.cur_finger  = finger if finger is not None else 0
 
-        h = self.hand.upper()
         cal = self.cal[self.hand]
 
         self.rec_start    = time.time()
@@ -529,7 +527,8 @@ class CalibrationTool(QMainWindow):
                                     'flex':  self.current[h]['flex'].copy(),
                                     'press': self.current[h]['press'].copy()
                                 })
-                except: break
+                except queue.Empty:
+                    break
 
         # Update plots and labels only for active hand
         if updated_active:
@@ -642,12 +641,8 @@ class CalibrationTool(QMainWindow):
         os.makedirs(target_dir, exist_ok=True)
         path, existing, existing_parsed = self._read_calibration_header()
 
-        # NOTE: MAX_PRESS is deliberately NOT in field_map. cal['press_max']
-        # is always a 5-element list (e.g. [None]*5 when untouched this
-        # session) — it is never the Python value None — so the old
-        # `val is not None` check always passed and blanked untouched
-        # fingers. It's handled separately below with a per-finger merge
-        # against calibration.h instead.
+        # MAX_PRESS is handled separately because it is merged per finger
+        # with the existing header values.
         field_map = {
             f"{h}_MIN_FLEX":  ('flex_min',  lambda v: f"int {h}_MIN_FLEX[]  = {{{', '.join(map(str, map(int, v)))}}};\n"),
             f"{h}_MAX_FLEX":  ('flex_max',  lambda v: f"int {h}_MAX_FLEX[]  = {{{', '.join(map(str, map(int, v)))}}};\n"),
@@ -691,7 +686,7 @@ class CalibrationTool(QMainWindow):
                 f.write("\n#endif\n")
             print(f"Header successfully patched: {path}")
         except Exception as e:
-            print(f"Header compilation dump error on {path}: {e}")
+            print(f"Header write failed for {path}: {e}")
 
     def closeEvent(self, event):
         if self.reader: self.reader.stop_readers()

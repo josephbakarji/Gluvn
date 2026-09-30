@@ -8,14 +8,12 @@ Legacy: Stats (finger-transition feature extraction — MPU6050-era, path-fixed 
 
 import os
 import csv
+import re
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
-from core.__init__ import learnDir, figDir, EXPDIR, mainDir
+from core.__init__ import learnDir, figDir, mainDir
 
-FLEX_RE = None
-PRESS_RE = None
-import re
 FLEX_RE = re.compile(r'^f\d+$')
 PRESS_RE = re.compile(r'^p\d+$')
 

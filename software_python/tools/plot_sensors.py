@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHB
 from PyQt5.QtCore import QTimer, Qt
 import pyqtgraph as pg
 from core.port_read import Reader
-import time
 import queue
 
 class SensorPlotter(QMainWindow):
@@ -24,10 +23,9 @@ class SensorPlotter(QMainWindow):
         self.setWindowTitle('Sensor Data Plotter')
         self.setGeometry(100, 100, 1200, 800)
         
-        # Initialize sensor reading with both flex, pressure, and IMU sensors
         self.sensor_config = {'l': {'flex': True, 'press': True, 'imu': True},
                             'r': {'flex': True, 'press': True, 'imu': True}}
-        self.reader = Reader(sensor_config=self.sensor_config, save=False)
+        self.reader = Reader(sensor_config=self.sensor_config)
         
         # Create main widget and layout
         main_widget = QWidget()
@@ -40,7 +38,6 @@ class SensorPlotter(QMainWindow):
         # Create side-by-side layout for sensors
         self.create_side_by_side_layout(main_layout)
         
-        # Define buffer size
         self.max_points = self.MAX_POINTS
         
         # Initialize data storage with numpy arrays for better performance
@@ -78,7 +75,6 @@ class SensorPlotter(QMainWindow):
         self.timer.timeout.connect(self.update_plots)
         self.timer.start(30)  # Update every 30ms for faster refresh
         
-        # Start sensor reading
         self.reader.start_readers()
         
     def create_control_panel(self, main_layout):
@@ -308,23 +304,16 @@ class SensorPlotter(QMainWindow):
         self.orientation_plot_r.setVisible(right_visible[2])
         self.accel_plot_r.setVisible(right_visible[3])
 
-        # For each side, set row stretch so that if only one plot is visible, it fills the space
         for layout, visible in [
             (self.left_layout, left_visible),
             (self.right_layout, right_visible)
         ]:
-            num_visible = sum(visible)
             for i, is_vis in enumerate(visible):
-                if num_visible == 1:
-                    layout.setRowStretch(i, 1 if is_vis else 0)
-                else:
-                    layout.setRowStretch(i, 1 if is_vis else 0)
+                layout.setRowStretch(i, 1 if is_vis else 0)
         
     def update_plots(self):
         try:
-            # Read data from both hands
-            for hand in ['l', 'r']:
-                # Try to get all available data
+            for hand in self.reader.hands:
                 while True:
                     try:
                         data = self.reader.threads[hand]['parser'].getQ().get(block=False)

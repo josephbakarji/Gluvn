@@ -22,24 +22,17 @@ from core.__init__ import portR, portL, baud, BLE_NAME_R, BLE_NAME_L, figDir
 # Reuse ParseSerial's protocol constants rather than redefining them here —
 # keeps this benchmark in lockstep with the actual receiver if the framing
 # ever changes again.
-FRAME_SYNC    = ParseSerial.FRAME_SYNC
-FRAME_FORMATS = ParseSerial.FORMATS          # {29: normal fmt, 39: calibration fmt}
+FRAME_SYNC = ParseSerial.FRAME_SYNC
+FRAME_LENGTHS = (ParseSerial.SAMPLE_UNIT_LEN, ParseSerial.CAL_UNIT_LEN)
 _crc16_ccitt  = ParseSerial._crc16_ccitt
 
 
 class TimestampedReadBLE(ReadBLE):
     """
-    P6 — ReadBLE, but the arrival timestamp is captured inside the GATT
-    notification callback itself, before the data ever touches the queue,
-    the frame parser, or CRC validation. Stock ReadBLE.sensq holds raw
-    bytes only, so the benchmark's old `time.perf_counter()` call (taken
-    after queue.get() + extract_frames()) was measuring notification
-    delivery time *plus* however long Python took to drain the queue and
-    parse — this removes that contamination. Only overrides the callback;
-    connect/reconnect/stop/send are all inherited unchanged from ReadBLE,
-    and `client.start_notify(..., self._notification_handler)` in the
-    parent's _ble_loop() resolves to this override via normal method
-    lookup, so no other change is needed to wire it up.
+    Capture the arrival timestamp inside the GATT notification callback,
+    before the data reaches the queue, parser, or CRC validation. Only the
+    callback is specialized; connection and transport behavior stay inherited
+    from ReadBLE.
     """
     def _notification_handler(self, sender, data: bytearray):
         self.sensq.put((time.perf_counter(), bytes(data)))
@@ -81,11 +74,10 @@ def extract_frames(buf: bytearray):
         payload = bytes(buf[3:3 + length])
         crc_rx = (buf[3 + length] << 8) | buf[3 + length + 1]
 
-        # Modulo, not exact-match: a bundled frame's length is a whole
-        # multiple of one sample's unit size (29 or 39), not necessarily
-        # equal to it. lcm(29,39)=532 > 255, so a single uint8 length byte
-        # can never ambiguously match both units.
-        unit_len = next((u for u in FRAME_FORMATS if length % u == 0), None)
+        # Bundled frames contain whole multiples of one sample unit (29 or
+        # 39 bytes), so length need not equal one unit. Their LCM is 1131,
+        # larger than the wire's one-byte length field.
+        unit_len = next((unit for unit in FRAME_LENGTHS if length % unit == 0), None)
 
         if unit_len is None or _crc16_ccitt(payload) != crc_rx:
             errors += 1

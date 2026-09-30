@@ -20,7 +20,6 @@ from core.port_read import Reader
 from core.__init__ import BLE_NAME_L, BLE_NAME_R
 from core.note_mapper import NoteMapper
 from core.midi_writer import MidiWriter
-from legacy.learning import Learn
 from threading import Thread
 from collections import deque
 
@@ -30,7 +29,7 @@ from itertools import islice, repeat
 import sys, asyncio
 from bleak import BleakScanner
 
-from base_config import TWO_BYTE, BYTE, ZERO_GYRIN, MAX_BEND, ZERO_ACCEL
+from base_config import TWO_BYTE, BYTE, ZERO_ACCEL
 
 
 class SensorProcess(Thread):
@@ -149,7 +148,6 @@ class BaseApp(Thread):
         self.start_error = None
         self.mapper = NoteMapper(root_note=root_note, scale=scale)
         self.midi_writer = MidiWriter()
-        self.debug = False
         self._attitude_rate_state = {}
 
     def _init_reader(self):
@@ -202,9 +200,6 @@ class BaseApp(Thread):
             if hand not in self.reader.threads:
                 print(f"Warning: {hand} hand not in reader threads — skipping trigger init")
                 continue
-            if self.debug:
-                print(f"Initializing trigger for {hand} hand using {trigger_sensor}")
-
             triggers[hand] = SensorProcess(
                 hand,
                 self.reader.threads[hand]['parser'].getQ(),
@@ -221,9 +216,6 @@ class BaseApp(Thread):
 
     def run(self):
         """Main application loop."""
-        if self.debug:
-            print(f"Starting BaseApp | hands={self.hands} | sensor_config={self.sensor_config}")
-
         self._init_reader()
         self.reader.start_readers()
         notemaps = self.mapper.basic_map_2hands()
@@ -372,15 +364,11 @@ class MovingWindow(BaseApp):
             new_size = self.window_averaging_control(reading_dict)
             if new_size != self.averaging_window_size:
                 self.averaging_window_size = new_size
-                if self.debug:
-                    print(f"Window size: {self.averaging_window_size}")
 
         if self.volume_controller is not None:
             new_volume = self.volume_control(reading_dict)
             if new_volume != self.global_volume:
                 self.global_volume = new_volume
-                if self.debug:
-                    print(f"Volume: {self.global_volume}")
                 self.midi_writer.aftertouch(self.global_volume)
 
         if self.pitch_bender is not None:
@@ -407,8 +395,6 @@ class MovingWindow(BaseApp):
                     self.window_trigger,
                     self.note_windows
                 )
-                if self.debug:
-                    print(f"Selected notes: {self.note_array}")
 
         elif hand == 'r' and 'switch' in reading_dict and self.note_array is not None:
             self.midi_writer.trig_note_array(
@@ -434,11 +420,6 @@ class MovingWindow(BaseApp):
         self._init_reader()
         self.reader.start_readers()
         self.initialize_triggers()
-
-        if self.debug:
-            print(f"Starting MovingWindow with {self.instrument} instrument")
-            print(f"Volume controller: {self.volume_controller}, Pitch bender: {self.pitch_bender}")
-            print(f"Averaging window size: {self.averaging_window_size}")
 
         while True:
             reading_dict = self.collect_q.get(block=True)

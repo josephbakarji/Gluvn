@@ -19,27 +19,10 @@ from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 # ======================================================================
 # 1. DATA ACQUISITION  decode, drain
 # ======================================================================
-SCALE = 32767.0
-
-def decode_ypr(yaw_cal: int, pitch_cal: int, roll_cal: int):
-    yaw   = yaw_cal   * 180.0 / SCALE - 180.0
-    pitch = pitch_cal * 180.0 / SCALE - 90.0
-    roll  = roll_cal  * 180.0 / SCALE - 180.0
-    return yaw, pitch, roll
-
-
-def rotation_from_ypr(yaw, pitch, roll) -> np.ndarray:
-    return Rotation.from_euler("ZYX", [yaw, pitch, roll], degrees=True).as_matrix()
-
-
 def rotation_from_quat(quat) -> np.ndarray:
     w, x, y, z = quat
     return Rotation.from_quat([x, y, z, w]).as_matrix()
 
-
-def ypr_from_rotation(R) -> tuple:
-    yaw, pitch, roll = Rotation.from_matrix(R).as_euler("ZYX", degrees=True)
-    return float(yaw), float(pitch), float(roll)
 
 G_MS2 = 9.80665
 
@@ -48,16 +31,6 @@ def decode_accel_raw(i0, i1, i2) -> np.ndarray:
     raw = np.array([i0 & 0xFFFE, i1, i2], dtype=float)
     accel_g = raw / 16383.5 - 2.0
     return accel_g * G_MS2
-
-def drain_latest(q: "queue.Queue"):
-    """Non-blocking drain to the newest sample  bounds render-loop latency."""
-    latest = None
-    while True:
-        try:
-            latest = q.get_nowait()
-        except queue.Empty:
-            return latest
-
 
 def drain_all(q: "queue.Queue"):
     items = []
@@ -87,7 +60,6 @@ AXIS_ARROW_LEN = 0.014
 AXIS_ARROW_R = 0.0045
 
 RENDER_HZ = 60
-TRAIL_MAXLEN = 150
 VEL_VECTOR_TIME_SCALE = 0.3
 VEL_VECTOR_COLOR = (1.0, 0.84, 0.37, 1.0)
 VEL_ARROW_LEN, VEL_ARROW_R = 0.010, 0.0035
@@ -103,15 +75,13 @@ HAND_NAMES = {"l": "LEFT", "r": "RIGHT"}
 MOTION_POS_RANGE_M = 2.0
 
 # M5StickC-Plus-1.1-like proportions (half-extents).
-# The IMU axis triad still reads as "coming out of the device" at the
-# same scale as before.
+# The IMU axis triad still reads as "coming out of the device" at this scale.
 _HX, _HY, _HZ = 0.024, 0.048, 0.0135
 DEVICE_COLOR = (0.10, 0.11, 0.14, 1.0)
 DEVICE_SCREEN_INSET = (0.62, 0.42)   # (w, h) fraction of device face
 DEVICE_BUTTON_R = 0.003
 DEVICE_BUTTON_LEN = 0.005
 
-FOREARM_LENGTH = 0.25
 FOREARM_R_WRIST = 0.025
 FOREARM_R_ELBOW = 0.035
 FOREARM_SIDES = 10
@@ -1625,7 +1595,6 @@ class TwinWindow(QtWidgets.QWidget):
         now = time.monotonic()
         dt = now - self._last_tick
         self._last_tick = now
-        self._dt = dt
         t = now - self._t_start
         for hand in self.hands:
             samples = drain_all(self.dataq[hand])

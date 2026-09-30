@@ -5,7 +5,7 @@ Adapted for M5Stick C Plus 1.1 + CD74HC4067 multiplexer + built-in IMU (MPU6886)
 import json
 import os
 from copy import deepcopy
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # Sensor thresholds/hysteresis: M5Stick 12-bit ADC values (4x the original 10-bit Arduino values)
 sensor_defaults = {
@@ -24,52 +24,12 @@ sensor_defaults = {
 TWO_BYTE = 65535
 BYTE = 255
 
-ADC_MAX = 4095   # M5Stick C Plus 1.1, 12-bit
-V_REF = 3.3      # M5Stick C Plus 1.1 operating voltage
-
-ZERO_GYRIN = 0.0   # M5Unified centers gyro at 0.0
 ZERO_ACCEL = 0.0   # M5Unified auto-calibrates / 0-centered
-
-MAX_BEND = 8000   # 12-bit scaled
-
-# CD74HC4067 channel mapping, thumb to pinky
-MUX_CHANNELS = {
-    'flex': [0, 1, 2, 3, 4],
-    'press': [5, 6, 7, 8, 9]
-}
-
-SCALES = {
-    'major': [0, 2, 4, 5, 7, 9, 11],
-    'minor': [0, 2, 3, 5, 7, 8, 10],
-    'pentatonic': [0, 2, 4, 7, 9],
-    'blues': [0, 3, 5, 6, 7, 10],
-    'chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-}
-
-# Note name -> MIDI number (C3 = 60)
-NOTES = {
-    'C': 60, 'C#': 61, 'Db': 61, 'D': 62, 'D#': 63, 'Eb': 63,
-    'E': 64, 'F': 65, 'F#': 66, 'Gb': 66, 'G': 67, 'G#': 68,
-    'Ab': 68, 'A': 69, 'A#': 70, 'Bb': 70, 'B': 71
-}
 
 default_sensor_config = {
     'l': {'flex': True, 'press': True, 'imu': True},
     'r': {'flex': True, 'press': True, 'imu': True}
 }
-
-CHORDS = {
-    'major': [0, 4, 7],
-    'minor': [0, 3, 7],
-    'diminished': [0, 3, 6],
-    'augmented': [0, 4, 8],
-    'sus2': [0, 2, 7],
-    'sus4': [0, 5, 7],
-    'major7': [0, 4, 7, 11],
-    'minor7': [0, 3, 7, 10],
-    'dominant7': [0, 4, 7, 10]
-}
-
 
 class BaseConfig:
     def __init__(self):

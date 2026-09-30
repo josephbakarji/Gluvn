@@ -79,12 +79,11 @@ class ReadWrite:
         imu_mode: 'accel' or 'gyro' — must match the firmware's use_gyro state
         at capture time (frame layout is mode-agnostic on the wire; label only).
         """
-        import queue as queue_mod
         records = []
         while True:
             try:
                 records.append(dataq.get(block=False))
-            except queue_mod.Empty:
+            except queue.Empty:
                 break
 
         if not records:
@@ -362,7 +361,15 @@ class ParseFile(Thread):
             # the entire session.
             while time.time() - time0 < next_time:
                 time.sleep(0.001)
-            self.dataq.put((time.time(), imuData[idx], flexData[idx], pressData[idx]))
+            sample = {
+                'time': next_time,
+                'imu': tuple(imuData[idx]),
+                'flex': tuple(flexData[idx]),
+                'press': tuple(pressData[idx]),
+            }
+            if _seq is not None:
+                sample['seq'] = _seq[idx]
+            self.dataq.put(sample)
 
     def getQ(self):
         return self.dataq

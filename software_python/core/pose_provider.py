@@ -368,9 +368,8 @@ def pitch_step(offset, state, thresh_range, hysteresis, mode='directional'):
     {-1, 0, +1}: armed at neutral, fires +1 above +(range+hyst) and -1 below
     -(range+hyst), re-arms once |offset| < max(range, hyst/2). Fire and re-arm
     edges stay apart for any range >= 0, so a reading dithering at either edge
-    cannot chatter, and one tilt is exactly one step. (The old re-arm test
-    |off| < max(range-hyst, 0) was unsatisfiable whenever range <= hyst, so the
-    latch died after its first step.)
+    cannot chatter, and one tilt is exactly one step. The re-arm bound remains
+    reachable when the threshold range is smaller than the hysteresis.
 
     'legacy_latch' reproduces the legacy edge-toggle for A/B: +1 on crossing
     above, -1 on crossing below only after a prior +1; tilting down from

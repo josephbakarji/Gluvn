@@ -84,8 +84,8 @@ class ChoirMovingWindow(MusicApp):
                 vibrato_enabled=vibrato_enabled,
                 calibration_window_sec=self.CALIBRATION_WINDOW_SEC)
         super().__init__(*args, motion_config=motion_config, **kwargs)
-        # volume_controller / pitch_bender / num_lh_fingers belonged to the old
-        # raw-sensor routing that nothing calls any more; accepted, ignored.
+        # Retain the legacy routing arguments so older launch configurations
+        # can construct this instrument while motion controls stay centralized.
         self.num_rh_fingers = num_rh_fingers
         self.playing_notes = [None] * num_rh_fingers
         self.base_volume = base_volume
@@ -150,7 +150,6 @@ class ChoirMovingWindow(MusicApp):
                   f'VOLUME DELTA (pitch tilt) [{motion.hand}]: {self._sounding_names()}')
 
     def _burst(self, ev):
-        print('Triggering notes...')
         self.pose.recenter_yaw()
         self.playing_notes = self.midi_writer.turn_off_all_playing(self.playing_notes)
         limit = min(self.MAX_SOUNDING_NOTES, len(self.playing_notes))
@@ -249,7 +248,6 @@ if __name__ == "__main__":
         yaw_window=YAW_WINDOW,
         vibrato_enabled=VIBRATO_ENABLED,
         enable_motion_stream=True,
-        # diagnostics=True,   # per-hand health print every 2 s (core/hand_diag.py)
     )
     app.start()
 
