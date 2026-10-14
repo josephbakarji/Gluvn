@@ -255,7 +255,7 @@ public:
     uint16_t getCalibCount() const { return calibCount; }
 
     // Call once, right after loading a freshly-computed bias via setGyroBias().
-    // Clears state computed under the OLD bias (integral windup, motion-
+    // Clears state computed under the previous bias (integral windup, motion-
     // detector EMAs, filter memory, jerk history, musical yaw) so it isn't
     // treated as valid evidence under the new one. Deliberately leaves q0..q3
     // (still a valid attitude) and yawOffset (owned by resetYaw(), called
@@ -406,10 +406,8 @@ public:
     // yaw reads ~0 at the current heading. Does NOT touch q0..q3, so
     // getQuaternion()/getBodyGravity() and anything derived from actual
     // attitude are unaffected; NavEKF is never reset by this call.
-    // rawYawDeg_ (raw, pre-offset yaw as of the last computeEuler()) is used
-    // as the new offset rather than the already-offset-corrected `yaw` --
-    // using the corrected value here was the old bug: only the first reset
-    // from zero worked, every later one fed a moving target back in.
+    // Use raw, pre-offset yaw as the new reference rather than the displayed
+    // offset-corrected value, so repeated resets remain stable.
     void resetYaw()
     {
         yawOffset = rawYawDeg_;
@@ -997,11 +995,8 @@ void MahonyAHRS::smoothOutputs()
     while (rollFiltered < -180.0f)
         rollFiltered += 360.0f;
 
-    // Pitch (asinf-derived, +/-90deg -- the wrap branches below are dead
-    // code by construction since pitch can never reach +/-180deg, same as
-    // yaw's smoothing used to be before the axis convention fix. Left as
-    // shortest-path smoothing for structural symmetry with roll/yaw; would
-    // only matter if pitch's range assumption changes again.)
+    // Pitch is bounded to +/-90 degrees, but uses the same shortest-path
+    // smoothing form as the wrapping roll and yaw outputs.
     float dp = pitch - pitchFiltered;
     if (dp > 180.0f)
         dp -= 360.0f;

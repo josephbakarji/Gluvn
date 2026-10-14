@@ -1,0 +1,43 @@
+{
+ "time": "2026-10-11 19:47:20",
+ "imu": "sync02_imu.csv",
+ "video": "sync02_tb.avi",
+ "cfg": {
+  "index": 0,
+  "cam": "thinkbook",
+  "backend": "dshow",
+  "started": "2026-10-11 19:29:39",
+  "requested": {
+   "w": 1280,
+   "h": 720,
+   "fps": 30,
+   "exposure": null
+  },
+  "readback": {
+   "FRAME_WIDTH": 1280.0,
+   "FRAME_HEIGHT": 720.0,
+   "FPS": 30.00003000003,
+   "AUTO_EXPOSURE": -1.0,
+   "EXPOSURE": -5.0,
+   "AUTOFOCUS": -1.0
+  }
+ },
+ "lag_ms": 4.327654146537599,
+ "lag_std_ms": 8.132612731336526,
+ "sigma_event_ms": 2.033964820903073,
+ "edge_scatter_ms": 7.044538049910295,
+ "sigma_total_interior_ms": 4.272682802661483,
+ "drift_ppm": 106.33252665281923,
+ "n_matched": 36,
+ "n_device_edges": 36,
+ "usable_bursts": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "n_bursts": 5,
+ "dejitter": true,
+ "fps": 29.87942293851965
+}

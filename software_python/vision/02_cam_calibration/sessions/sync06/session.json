@@ -1,0 +1,12 @@
+{
+ "kind": "sync_calibration",
+ "meta": {
+  "hand": "l",
+  "participant": "P01",
+  "kind": "sync"
+ },
+ "n_bursts": 4,
+ "gap_s": 25.0,
+ "burst_pulses": 8,
+ "protocol_version": "1.0"
+}

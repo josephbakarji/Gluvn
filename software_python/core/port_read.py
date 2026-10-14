@@ -588,6 +588,9 @@ class ParseSerial(Thread):
         # contain ONE value for the run's lifetime -- more than one is hard
         # proof frames from the other glove (or garbage) landed here.
         self.hand_byte_seen = set()
+        # Optional non-consuming observers, e.g. the v2 FrameLogger. Taps
+        # receive every decoded frame without stealing it from dataq's consumer.
+        self.taps = []
 
         self.slices = {
             # unp indices (base fields, before any optional suffix):
@@ -636,6 +639,7 @@ class ParseSerial(Thread):
 
     def parse(self):
         chunk = self.sensq.get(block=True)
+        rx_ns = time.perf_counter_ns()
         self._buf += chunk
 
         while True:
@@ -701,6 +705,8 @@ class ParseSerial(Thread):
                     'device_us': unp[3],
                     'sensor_type': unp[7] & 1,
                     'gyro_calib_toggle': unp[8] & 1,
+                    'rx_ns': rx_ns,
+                    'sync_led': unp[9] & 1,
                     'calibration_mode': bool(flags & self.FLAG_CALIBRATION_MODE),
                     'low_battery': bool(flags & self.FLAG_LOW_BATTERY),
                 }
@@ -757,6 +763,9 @@ class ParseSerial(Thread):
 
                 if self.add_timestamp:
                     data_to_put['time'] = time.time() - self.time0
+
+                for tap in self.taps:
+                    tap(data_to_put)
 
                 try:
                     self.dataq.put_nowait(data_to_put)

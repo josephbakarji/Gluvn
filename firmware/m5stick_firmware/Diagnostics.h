@@ -6,7 +6,7 @@
  * here. Nothing here changes estimator behavior, gains, or Q/R -- observes
  * and reports only.
  *
- * Design so future diagnostics don't require touching the main .ino:
+ * Design so additional diagnostics do not require touching the main .ino:
  *   - All state (counters, EMAs, toggles, throttle timers) lives in this file.
  *   - The .ino calls small `diagNote*()` / `diagBegin*()`/`diagEnd*()` hooks
  *     at the exact point each event happens (IMU sample arrives/missed, dt
@@ -39,9 +39,9 @@
  * loop_us vs calib_us: runStartupGyroCalibration() is a deliberate,
  * multi-second BLOCKING routine (collects STARTUP_GYRO_CAL_SAMPLES gyro
  * samples while stationary), called from inside loop() at multiple sites.
- * Left unaccounted for, its duration got folded into loop_us_max, pinning a
- * diagnostic meant to catch UNEXPECTED stalls at a huge, calibration-dominated
- * number. Now timed separately (diagCalibTimingBegin/End, reported as
+ * Left unaccounted for, its duration would be folded into loop_us_max, pinning
+ * the unexpected-stall metric to a calibration-dominated value. It is timed
+ * separately (diagCalibTimingBegin/End, reported as
  * calib_us/calib_us_max/calib_count) and excluded from loop_us/loop_us_max --
  * see diagCalibTimingEnd().
  */
@@ -195,9 +195,8 @@ inline void diagNavPrintTimingEnd() {
 
 // Clears every since-boot max/count (not cumulative identity counters like
 // diagBootCount/diagImuFreshCount, which describe uptime totals, not
-// anomalies) so a test window's diagnostics aren't contaminated by earlier
-// events (e.g. an old loop_us_max from calibration). Call via DIAG_RESET_MAX
-// right before a test you want clean diagnostics for.
+// anomalies) so a measurement window is not contaminated by earlier events.
+// Call via DIAG_RESET_MAX before collecting a fresh diagnostic interval.
 inline void diagResetMax(NavEKF &navEkf) {
     diagDtRejectCount  = 0;
     diagDtUnder2msCount = 0;

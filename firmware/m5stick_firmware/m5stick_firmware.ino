@@ -146,7 +146,7 @@ const unsigned long USB_BAUD = 500000;  // keep in sync with __init__.py on the 
 // -------------------------------------------------------
 // Runtime config
 // -------------------------------------------------------
-char hand                 = 'r';
+char hand                 = 'l';
 bool streamGyroInImuSlots = false;   // telemetry encoding only — see USE_GYRO_ON/OFF doc above
 bool send_quat            = false;   // QUAT_STREAM_ON/OFF
 bool send_nav_quat        = false;   // NAV_QUAT_STREAM_ON/OFF
@@ -157,8 +157,24 @@ bool send_motion          = false;   // MOTION_STREAM_ON/OFF
 bool gyroCalibToggle      = false;   // flips after each completed gyro calibration
 // nav_diagnostics, sys_diagnostics, and diagnostic counters/printers live in Diagnostics.h
 
+// W2 camera/IMU synchronization: the built-in M5StickC Plus red LED is
+// active-low on GPIO10. Its state is also carried in imu2 bit 0 so the exact
+// device_us of each LED edge is available to the host.
+const uint8_t SYNC_LED_PIN = 10;
+bool     syncLedOn = false;
+bool     syncActive = false;
+uint16_t syncEdgesLeft = 0;
+uint32_t syncNextUs = 0;
+uint32_t syncRng = 1;
+
+static uint32_t syncRand() {
+  syncRng ^= syncRng << 13;
+  syncRng ^= syncRng >> 17;
+  syncRng ^= syncRng << 5;
+  return syncRng;
+}
+
 const size_t FLAGS_LEN           = 1;    // always-present stream-flags byte
-const size_t SAMPLE_PAYLOAD_LEN  = 28;   // normal-mode payload bytes (excludes flags byte)
 const size_t CAL_PAYLOAD_LEN     = 38;   // calibration-mode payload bytes (excludes flags byte)
 const size_t QUAT_EXTRA_LEN      = 8;    // 4x int16 (qw,qx,qy,qz)
 const size_t NAV_QUAT_EXTRA_LEN  = 8;    // 4x int16 (nqw,nqx,nqy,nqz)
@@ -385,6 +401,7 @@ size_t buildPayload(uint8_t* out) {
   uint16_t i2 = streamGyroInImuSlots ? gz_cal : az_cal;
   i0 = (i0 & 0xFFFE) | (streamGyroInImuSlots ? 0x0001 : 0x0000);   // sensor_type in bit0
   i1 = (i1 & 0xFFFE) | (gyroCalibToggle ? 0x0001 : 0x0000);        // calib-complete toggle in bit0
+  i2 = (i2 & 0xFFFE) | (syncLedOn ? 0x0001 : 0x0000);              // sync LED state in bit0
 
   out[idx++] = i0 >> 8; out[idx++] = i0 & 0xFF;
   out[idx++] = i1 >> 8; out[idx++] = i1 & 0xFF;
@@ -558,6 +575,19 @@ void processCommand(String cmd) {
     streamGyroInImuSlots = true; Serial.println("USE_GYRO_ON_OK");
   } else if (cmd == "USE_GYRO_OFF") {
     streamGyroInImuSlots = false; Serial.println("USE_GYRO_OFF_OK");
+  } else if (cmd.startsWith("SYNC_START:")) {
+    int separator = cmd.indexOf(':', 11);
+    if (separator > 0) {
+      syncEdgesLeft = 2 * (uint16_t)cmd.substring(11, separator).toInt();
+      syncRng = (uint32_t)cmd.substring(separator + 1).toInt() | 1U;
+      syncLedOn = false;
+      digitalWrite(SYNC_LED_PIN, HIGH);
+      syncNextUs = micros() + 200000UL;
+      syncActive = syncEdgesLeft > 0;
+      Serial.println("SYNC_START_OK");
+    } else {
+      Serial.println("SYNC_START_FMT_ERR");
+    }
   } else if (cmd == "QUAT_STREAM_ON") {
     send_quat = true; Serial.println("QUAT_STREAM_ON_OK");
   } else if (cmd == "QUAT_STREAM_OFF") {
@@ -608,10 +638,8 @@ void processCommand(String cmd) {
       String vals = cmd.substring(c2 + 1);
 
       if (type == "GYRO_BIAS") {
-        // Removed: gyro bias is solved exclusively by runStartupGyroCalibration()
-        // (RECALIBRATE_GYRO) and is deliberately session-only/non-persisted.
-        // A host-writable path here created two uncoordinated sources of truth
-        // for ACTIVE_GYRO_BIAS. Use RECALIBRATE_GYRO instead.
+        // Gyro bias is solved exclusively by RECALIBRATE_GYRO and remains
+        // session-only, so host calibration cannot create a second bias source.
         Serial.println("SET_CAL_GYRO_BIAS_REMOVED_USE_RECALIBRATE_GYRO");
         return;
       }
@@ -854,7 +882,7 @@ void runStartupGyroCalibration() {
   ACTIVE_GYRO_BIAS[1] = by;
   ACTIVE_GYRO_BIAS[2] = bz;
   ahrs.setGyroBias(0.0f, 0.0f, 0.0f);
-  ahrs.reinitializeAfterBiasUpdate();   // clears stale integral/motion/filter state under the old bias
+  ahrs.reinitializeAfterBiasUpdate();   // clears state computed under the previous bias
   ahrs.resetYaw();
   navEkf.reset();   // re-arms from scratch; requires a fresh confirmed-stationary window
 
@@ -898,6 +926,8 @@ void setup() {
   diagSetBootCount(bootCount);
   Serial.printf("BOOT #%u\n", bootCount);
   M5.Imu.begin();
+  pinMode(SYNC_LED_PIN, OUTPUT);
+  digitalWrite(SYNC_LED_PIN, HIGH);  // active-low LED off
   // Mahony's detector adapts attitude bias; NavEKF owns the authoritative
   // navigation stationary flag and ZUPT timing.
   ahrs.setVarianceWindowTimeConstant(0.05f);
@@ -1003,8 +1033,8 @@ void loop() {
   // quaternion telemetry, or either diagnostic stream. Reset once on a
   // rising edge so the 0.3s arm window starts fresh, not from stale state.
   static bool navEkfWasNeeded = false;
-  // Diagnostics (nav_diagnostics/sys_diagnostics) intentionally excluded:
-  // they're an offline debugging aid, not a normal-operation data path.
+  // Diagnostics do not wake the estimators; they observe an active estimator
+  // stream and require text mode when their output is enabled.
   // Estimators now wake only for actual consumers (motion/nav_quat stream).
   navEkfNeeded = send_motion || send_nav_quat;
   if (navEkfNeeded && !navEkfWasNeeded) {
@@ -1029,6 +1059,21 @@ void loop() {
 
       auto imu = M5.Imu.getImuData();
       uint32_t sampleUs = micros();
+      if (syncActive && (int32_t)(sampleUs - syncNextUs) >= 0) {
+        syncLedOn = !syncLedOn;
+        digitalWrite(SYNC_LED_PIN, syncLedOn ? LOW : HIGH);
+        // Randomized hold times make the edges sample different camera-frame
+        // phases. The even edge count leaves the LED off at the end.
+        uint32_t holdMs = syncLedOn
+            ? 100U + syncRand() % 61U
+            : 250U + syncRand() % 401U;
+        syncNextUs = sampleUs + holdMs * 1000UL;
+        if (--syncEdgesLeft == 0) {
+          syncActive = false;
+          syncLedOn = false;
+          digitalWrite(SYNC_LED_PIN, HIGH);
+        }
+      }
       float dt = (float)(sampleUs - lastSampleUs) / 1e6f;
       lastSampleUs = sampleUs;
       bool usableDt = dt > 0.0f && dt <= MAX_NAV_GAP_SEC;

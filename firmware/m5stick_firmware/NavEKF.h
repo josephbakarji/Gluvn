@@ -87,7 +87,7 @@ public:
         gravityLinAccelTrustFloorG_ = 0.04f; // g, fLinearNorm_ below this: no attenuation
         gravityLinAccelTrustCeilG_  = 0.18f; // g, fLinearNorm_ above this: fully distrusted
         lastGravityLinAccelTrust_   = 1.0f;
-        blockBiasCorrectionFromGravityUpdate_ = false;   // ablation switch, default off -- see member comment
+        blockBiasCorrectionFromGravityUpdate_ = false;   // optional diagnostic isolation switch
     }
 
     void update(
@@ -359,7 +359,7 @@ public:
     void setAttitudeGateBypassStreak(int samples)     { attitudeGateBypassStreak_ = samples < 1 ? 1 : samples; }
     void setGravityLinAccelTrustFloor(float g) { gravityLinAccelTrustFloorG_ = constrain(g, 0.0f, 2.0f); }
     void setGravityLinAccelTrustCeil(float g)  { gravityLinAccelTrustCeilG_  = constrain(g, gravityLinAccelTrustFloorG_ + 1e-4f, 2.0f); }
-    // Ablation switch, default off -- see member comment on blockBiasCorrectionFromGravityUpdate_.
+    // Optional diagnostic isolation switch; disabled during normal operation.
     void setBlockBiasCorrectionFromGravityUpdate(bool enabled) { blockBiasCorrectionFromGravityUpdate_ = enabled; }
     void setAccelBiasLimit(float g)                   { accelBiasLimitG_     = constrain(g, 0.0f, 2.0f); }
     void setGyroBiasLimit(float dps)                  { gyroBiasLimitDps_    = constrain(dps, 0.0f, 500.0f); }
@@ -443,7 +443,7 @@ private:
     float gravityLinAccelTrustCeilG_;    // fLinearNorm_ above this: fully distrusted
     float lastGravityLinAccelTrust_;     // last computed factor, [0,1] -- diagnostics only
 
-    // Ablation switch, default off: blocks gravityAttitudeUpdate()'s
+    // Isolation switch, default off: blocks gravityAttitudeUpdate()'s
     // correction from reaching the accel/gyro bias rows (state indices
     // 9-14), leaving that update to correct attitude only. A single
     // ambiguous gravity vector (no magnetometer, yaw unobservable) has poor
@@ -451,8 +451,8 @@ private:
     // indistinguishable from a small tilt error on that axis. Unlike this,
     // ZUPT's velocity->bias coupling (zuptUpdate() -> applyCorrectionAndJoseph())
     // is direct and well-conditioned (see propagate()'s Phi), and is NOT
-    // affected by this switch. Diagnostic/experimental tool for isolating
-    // the two coupling paths; leave off otherwise.
+    // affected by this switch. ZUPT's velocity-to-bias coupling is not
+    // affected, allowing the two correction paths to be isolated.
     bool  blockBiasCorrectionFromGravityUpdate_;
 
     bool gravityMeasurementValid_;
@@ -591,7 +591,7 @@ private:
         pNav_[0] = pNav_[1] = pNav_[2] = 0.0f;
         vNav_[0] = vNav_[1] = vNav_[2] = 0.0f;
 
-        // ACCEL_BIAS already removed by firmware. Don't use Mahony's attitude
+        // Firmware accel bias is already applied. Do not use Mahony's attitude
         // to init the residual bias: tilt error would be absorbed as a false
         // body-frame acceleration bias.
         baNav_[0] = baNav_[1] = baNav_[2] = 0.0f;
@@ -1085,7 +1085,7 @@ private:
                 K[i][j] = sum;
             }
 
-        // Ablation switch, default off -- see member comment on
+        // Isolation switch, default off -- see member comment on
         // blockBiasCorrectionFromGravityUpdate_. Zeroing K's bias rows means
         // dx[9..14] comes out zero and, in the Joseph update, IKH's bias
         // rows reduce to identity and KRKt's bias rows/columns to zero for
