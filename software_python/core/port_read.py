@@ -34,7 +34,7 @@ class Reader:
                  sensor_config=None,
                  use_ble=True,
                  force_ble=False,
-                 ble_timeout=10.0):
+                 ble_timeout=10.0, research=False, raw_observers=None, record_observers=None):
 
         self.directory = directory
         self.baud = baud
@@ -45,6 +45,11 @@ class Reader:
         self.use_ble = use_ble
         self.force_ble = force_ble
         self.ble_timeout = ble_timeout
+        self.research = research
+        if research and parse_file is not None:
+            raise ValueError("research capture requires a live transport; use offline v2 replay for files")
+        self.raw_observers = raw_observers or {}
+        self.record_observers = record_observers or {}
         # Shared across every ReadBLE this session -- see BleLoopThread.
         # Only actually started in start_readers() if a hand ends up on BLE.
         self.ble_loop_thread = BleLoopThread()
@@ -67,7 +72,7 @@ class Reader:
                     print(f"[{hand.upper()}] USB found on {port}, using it.")
                     threads[hand]['port'] = port
                     try:
-                        threads[hand]['serial'] = ReadSerial(port, self.baud, sensq=shared_q)
+                        threads[hand]['serial'] = ReadSerial(port, self.baud, sensq=shared_q, research=self.research)
                         threads[hand]['is_ble'] = False
                     except serial.SerialException as e:
                         print(f"Warning: could not open {port}: {e}")
@@ -77,7 +82,7 @@ class Reader:
                     if self.use_ble:
                         print(f"[{hand.upper()}] No USB port — connecting via BLE.")
                         ble_name = BLE_NAME_R if hand == 'r' else BLE_NAME_L
-                        threads[hand]['serial'] = ReadBLE(ble_name, self.ble_loop_thread, sensq=shared_q)
+                        threads[hand]['serial'] = ReadBLE(ble_name, self.ble_loop_thread, sensq=shared_q, research=self.research)
                         threads[hand]['is_ble'] = True
                     else:
                         print(f"Warning: no USB port for {hand} and BLE is disabled — skipping.")
@@ -90,7 +95,16 @@ class Reader:
                     **self.sensor_config[hand],
                     qsize=self.parse_qsize,
                     expected_hand=hand,
+                    research=self.research,
                 )
+                if self.research:
+                    from core.capture_v2 import Ingress
+                    ingress = Ingress(shared_q, self.raw_observers.get(hand))
+                    threads[hand]['serial'].research_ingress = ingress
+                    threads[hand]['ingress'] = ingress
+                    observer = self.record_observers.get(hand)
+                    if observer:
+                        threads[hand]['parser'].taps.append(observer)
             else:
                 from core.data_analysis import ParseFile
                 threads[hand]['parser'] = ParseFile(self.directory, self.parse_file, hand)
@@ -179,6 +193,16 @@ class Reader:
         return False
 
     def start_readers(self):
+        if self.research:
+            from core.capture_v2 import CaptureError
+            self.ble_loop_thread.start()
+            for entry in self.threads.values():
+                entry['parser'].start()
+                entry['serial'].start()
+            for hand, entry in self.threads.items():
+                if entry['is_ble'] and not entry['serial'].wait_connected(self.ble_timeout):
+                    raise CaptureError(f"{hand}: research BLE connection timeout")
+            return
         if self.parse_file is None:
             self.ble_loop_thread.start()
             # Kick off every hand's connection attempt concurrently, before
@@ -209,15 +233,27 @@ class Reader:
                 self.threads[hand]['parser'].start()
 
     def stop_readers(self):
+        research_stop_errors = []
         for hand in self.hands:
             if self.parse_file is None:
                 try:
                     self.threads[hand]['serial'].stop()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    if self.research:
+                        research_stop_errors.append(str(exc))
+        if self.research:
+            for entry in self.threads.values():
+                entry['parser'].request_stop()
+            for entry in self.threads.values():
+                if entry['parser'].ident is not None:
+                    entry['parser'].join(timeout=2)
+                if entry['parser'].is_alive():
+                    research_stop_errors.append("research parser did not stop/drain")
         if self.parse_file is None:
             self.ble_loop_thread.stop()
         self.report_hand_integrity()
+        if research_stop_errors:
+            raise RuntimeError("; ".join(research_stop_errors))
 
     def report_hand_integrity(self):
         """Surface each parser's hand_byte_seen (see ParseSerial.parse) --
@@ -236,6 +272,8 @@ class Reader:
         try:
             self.threads[hand]['serial'].send(f'{cmd}\n')
         except Exception as e:
+            if self.research:
+                raise
             print(f"Warning: failed to send command to {hand}: {e}")
 
 
@@ -291,7 +329,7 @@ class ReadBLE:
     # other hand's coroutine sharing the same loop.
     BLE_OP_TIMEOUT_SEC = 8.0
 
-    def __init__(self, device_name, ble_loop_thread, sensq=None, qsize=48):
+    def __init__(self, device_name, ble_loop_thread, sensq=None, qsize=48, research=False):
         self.device_name = device_name
         self._ble_loop_thread = ble_loop_thread
         self.sensq = sensq if sensq is not None else queue.Queue(maxsize=qsize)  # own queue if none given
@@ -303,12 +341,21 @@ class ReadBLE:
         # await it, and this instance may be constructed before
         # ble_loop_thread.start() has actually spun up that thread.
         self._write_q = None
+        self.research, self.research_ingress = research, None
+        self.observed_mtu = None
+        self._research_task = None
 
     def start(self):
-        self._ble_loop_thread.submit(self._ble_loop())
+        self._research_task = self._ble_loop_thread.submit(self._ble_loop())
 
     def stop(self):
         self._stop_flag.set()
+        if self.research and self._research_task is not None:
+            try:
+                self._research_task.result(timeout=10)
+            except Exception as exc:
+                self._research_task.cancel()
+                raise RuntimeError(f"research BLE shutdown failed: {exc}") from exc
 
     def getQ(self):
         return self.sensq
@@ -320,10 +367,19 @@ class ReadBLE:
         # A send() arriving before _write_q exists is dropped rather than
         # raising -- same effective behavior as a fire-and-forget put onto
         # a queue nothing had read yet.
-        if self._write_q is not None:
+        if self.research:
+            if self._write_q is None:
+                raise RuntimeError("research BLE command queue not ready")
+            async def enqueue():
+                self._write_q.put_nowait(text)
+            self._ble_loop_thread.submit(enqueue()).result(timeout=1)
+        elif self._write_q is not None:
             self._ble_loop_thread.submit(self._write_q.put(text))
 
     def _notification_handler(self, sender, data: bytearray):
+        if self.research:
+            self.research_ingress.receive(data, time.perf_counter_ns())
+            return
         try:
             self.sensq.put_nowait(bytes(data))
         except queue.Full:
@@ -337,7 +393,7 @@ class ReadBLE:
                 pass
 
     async def _ble_loop(self):
-        self._write_q = asyncio.Queue()
+        self._write_q = asyncio.Queue(maxsize=16 if self.research else 0)
 
         while not self._stop_flag.is_set():
             try:
@@ -348,6 +404,7 @@ class ReadBLE:
 
                 async with BleakClient(device, timeout=self.BLE_OP_TIMEOUT_SEC) as client:
                     self._client = client
+                    self.observed_mtu = client.mtu_size
                     self._connected_event.set()
 
                     await asyncio.wait_for(
@@ -356,6 +413,7 @@ class ReadBLE:
                     )
 
                     while not self._stop_flag.is_set() and client.is_connected:
+                        cmd = None
                         try:
                             cmd = await asyncio.wait_for(self._write_q.get(), timeout=0.1)
                             await asyncio.wait_for(
@@ -367,11 +425,21 @@ class ReadBLE:
                                 timeout=self.BLE_OP_TIMEOUT_SEC,
                             )
                         except asyncio.TimeoutError:
+                            if self.research and cmd is not None:
+                                self.research_ingress.fail("research BLE command write timed out")
+                                break
                             pass
 
                     self._connected_event.clear()
+                    if self.research and not self._stop_flag.is_set():
+                        self.research_ingress.fail("BLE disconnected; automatic research reconnect disabled")
+                        break
 
             except Exception as e:
+                if self.research:
+                    self.research_ingress.fail(f"BLE operation failed: {type(e).__name__}: {e}")
+                    self._connected_event.clear()
+                    break
                 print(f"BLE: connection attempt failed ({type(e).__name__}: {e}), retrying in 2s...")
                 self._connected_event.clear()
                 await asyncio.sleep(2)
@@ -380,7 +448,7 @@ class ReadBLE:
 
 
 class ReadSerial(Thread):
-    def __init__(self, port, baud, sensq=None, qsize=48):
+    def __init__(self, port, baud, sensq=None, qsize=48, research=False):
         Thread.__init__(self)
         self.daemon = True
         self._stop_event = Event()
@@ -388,15 +456,29 @@ class ReadSerial(Thread):
         self.baud = baud
         self.sensq = sensq if sensq is not None else queue.Queue(maxsize=qsize)
         self._port_lock = threading.Lock()
+        self.research, self.research_ingress = research, None
 
-        self.serial_port = serial.Serial()
+        if self.research and os.name == "nt":
+            from core.research_usb import create_serial
+            self.serial_port = create_serial()
+        else:
+            self.serial_port = serial.Serial()
         self.serial_port.port = self.port
         self.serial_port.baudrate = self.baud
-        self.serial_port.timeout = 2
+        self.serial_port.timeout = .005 if self.research else 2
+        if self.research:
+            self.serial_port.write_timeout = 1
         self.serial_port.dtr = False
         self.serial_port.rts = False
         self.serial_port.open()
-        self._hardware_reset()
+        if self.research and os.name == "nt":
+            try:
+                self.serial_port.set_buffer_size(rx_size=65536, tx_size=4096)
+            except Exception as exc:
+                self.serial_port.close()
+                raise RuntimeError("research USB receive-buffer configuration failed") from exc
+        if not self.research:
+            self._hardware_reset()
 
     def _hardware_reset(self):
         """Toggle DTR/RTS to force an ESP32 hardware reset, equivalent to unplug/replug."""
@@ -428,8 +510,23 @@ class ReadSerial(Thread):
     def read(self):
         try:
             with self._port_lock:
-                n = self.serial_port.in_waiting or 1
-                temp = self.serial_port.read(n)
+                if self.research:
+                    temp = self.serial_port.read(4096)
+                else:
+                    n = self.serial_port.in_waiting or 1
+                    temp = self.serial_port.read(n)
+            if self.research:
+                if temp:
+                    self.research_ingress.receive(temp, time.perf_counter_ns())
+                counts = getattr(self.serial_port, "driver_error_counts", {})
+                for name, value in counts.items():
+                    self.research_ingress.counts["serial_driver_" + name] = value
+                self.research_ingress.counts["serial_read_timeout_us"] = 5000
+                if os.name == "nt":
+                    self.research_ingress.counts["serial_rx_buffer_requested_bytes"] = 65536
+                if counts.get("error_checks", 0):
+                    self.research_ingress.fail(f"Windows USB serial line/driver error: {dict(counts)}")
+                return
             if temp:
                 try:
                     self.sensq.put_nowait(temp)
@@ -443,6 +540,12 @@ class ReadSerial(Thread):
                     except queue.Full:
                         pass
         except Exception as e:
+            if self.research:
+                if self._stop_event.is_set():
+                    return
+                self.research_ingress.fail(f"serial read failed: {e}")
+                self._stop_event.set()
+                return
             print(f"Warning: serial read failed on {self.port}: {e}")
             time.sleep(0.12)
 
@@ -452,6 +555,11 @@ class ReadSerial(Thread):
             self.serial_port.cancel_read()
         except Exception:
             pass
+
+        if self.research and self.is_alive():
+            self.join(timeout=3)
+            if self.is_alive():
+                raise RuntimeError("research serial producer did not stop")
         try:
             self.serial_port.close()
         except Exception:
@@ -460,8 +568,13 @@ class ReadSerial(Thread):
     def send(self, text):
         try:
             with self._port_lock:
-                self.serial_port.write(text.encode())
+                payload = text.encode()
+                written = self.serial_port.write(payload)
+                if self.research and written != len(payload):
+                    raise RuntimeError("partial research serial command write")
         except Exception as e:
+            if self.research:
+                raise
             print(f"Warning: failed to write to {self.port}: {e}")
 
     def getQ(self):
@@ -567,7 +680,7 @@ class ParseSerial(Thread):
     def __init__(self, sensq, time0, format=None,
                  length_checksum=None, add_timestamp=False,
                  flex=False, press=True, imu=False, qsize=30,
-                 nav_quat_enabled=False, expected_hand=None):
+                 nav_quat_enabled=False, expected_hand=None, research=False):
         Thread.__init__(self)
         self.daemon = True
         self.sensq = sensq
@@ -583,6 +696,12 @@ class ParseSerial(Thread):
         # known -- purely descriptive today (see hand_byte_seen), kept as a
         # constructor arg for a future active cross-check.
         self.expected_hand = expected_hand
+        self.research, self.research_error = research, None
+        self._research_stop = Event()
+        self.research_counts = {'attempted': 0, 'enqueued': 0, 'rejected': 0, 'consumed': 0, 'chunks_consumed': 0, 'bytes_consumed': 0}
+        if research:
+            from core.capture_v2 import Decoder
+            self.research_decoder = Decoder(expected_hand)
         # Every distinct payload[0] value observed on this parser's queue.
         # Each hand has its own connection/parser, so this should only ever
         # contain ONE value for the run's lifetime -- more than one is hard
@@ -626,8 +745,25 @@ class ParseSerial(Thread):
         return fmt, calcsize(fmt), has_quat, has_nav_quat, has_motion
 
     def run(self):
+        if self.research:
+            import queue as _queue
+            while not self._research_stop.is_set() or not self.sensq.empty():
+                try:
+                    self.parse()
+                    self.research_decoder.expire()
+                except _queue.Empty:
+                    try:
+                        self.research_decoder.expire()
+                    except Exception as exc:
+                        self.research_error = str(exc)
+                except Exception as exc:
+                    self.research_error = str(exc)
+            return
         while True:
             self.parse()
+
+    def request_stop(self):
+        self._research_stop.set()
 
     @staticmethod
     def _crc16_ccitt(data, crc=0xFFFF):
@@ -638,6 +774,28 @@ class ParseSerial(Thread):
         return crc
 
     def parse(self):
+        if self.research:
+            import copy
+            chunk = self.sensq.get(timeout=.1)
+            self.research_counts['chunks_consumed'] += 1
+            self.research_counts['bytes_consumed'] += len(chunk.data)
+            for frame in self.research_decoder.feed(chunk, time.perf_counter_ns()):
+                if frame['record_kind'] == 'legacy':
+                    continue
+                frame['publication_ns'] = time.perf_counter_ns()
+                for tap in tuple(self.taps):
+                    tap(copy.deepcopy(frame))
+                self.research_counts['attempted'] += 1
+                try:
+                    self.dataq.put_nowait(frame)
+                    self.research_counts['enqueued'] += 1
+                except queue.Full:
+                    self.research_counts['rejected'] += 1
+                    self.research_error = 'research decoded queue overflow'
+                self.frames_ok += 1
+            if self.research_decoder.counts['crc_errors']:
+                self.research_error = 'research CRC failure'
+            return
         chunk = self.sensq.get(block=True)
         rx_ns = time.perf_counter_ns()
         self._buf += chunk

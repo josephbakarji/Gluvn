@@ -5,3 +5,8 @@ data/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Local vision recordings and regenerable acquisition/build output.
+/software_python/vision/sessions/
+/software_python/vision/analysis_runs/
+/software_python/vision/*.mp4

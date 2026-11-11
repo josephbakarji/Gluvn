@@ -77,8 +77,8 @@ class MidiWriter:
         if result != MMSYSERR_NOERROR:
             print(f"Warning: MIDI message send failed. Code: {result}")
 
-    def trig_note(self, notemidi, vel):
-        self._send_short_msg(0x90, int(notemidi), int(vel))   # Note On, Ch 1
+    def trig_note(self, notemidi, vel, channel=1):
+        self._send_short_msg(0x90 + (channel - 1), int(notemidi), int(vel))   # Note On (vel 0 = off)
 
     def pitch_bend(self, pitch_change):
         # Raw offset -> 14-bit unsigned pitch bend (0-16383)

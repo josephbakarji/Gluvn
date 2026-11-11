@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-portR = 'COM3'   # Right hand glove
-portL = 'COM4'   # Left hand glove
+portR = 'COM4'   # Right hand glove
+portL = 'COM3'   # Left hand glove
 
 baud = 500000 #aligned with firmware baud rate
 IACDriver         = 'loopMIDI Port'

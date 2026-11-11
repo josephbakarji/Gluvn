@@ -24,6 +24,7 @@
 
 class MahonyAHRS
 {
+    uint32_t resetCount_ = 0;
 
 public:
     MahonyAHRS()
@@ -33,6 +34,7 @@ public:
 
     void reset()
     {
+        ++resetCount_;
         q0 = 1.0f;
         q1 = 0.0f;
         q2 = 0.0f;
@@ -436,6 +438,7 @@ public:
 
     bool isStationary() const { return stationary; }
 
+    uint32_t getResetCount() const { return resetCount_; }
     float getStationaryTime() const { return stationaryTime; }
 
     float getAccelConfidence() const { return accelConfidence; }
@@ -469,6 +472,32 @@ public:
         gx = 2*(q1*q3 - q0*q2);
         gy = 2*(q2*q3 + q0*q1);
         gz = 1 - 2*(q1*q1+q2*q2);
+    }
+
+    // Read-only acquisition configuration; field names carry units.
+    template<class Json> void captureConfiguration(Json& j) const {
+        j.number("kp_static", kpStatic);
+        j.number("ki_static", kiStatic);
+        j.number("kp_dynamic", kpDynamic);
+        j.number("ki_dynamic", kiDynamic);
+        j.number("stationary_enter_dps", stationaryGyroThreshold);
+        j.number("stationary_enter_g", stationaryAccelThreshold);
+        j.number("stationary_exit_dps", stationaryGyroExitThreshold);
+        j.number("stationary_exit_g", stationaryAccelExitThreshold);
+        j.number("accel_reject_g", accelRejectThreshold);
+        j.number("output_alpha", outputAlpha);
+        j.number("output_tau_s", outputTau);
+        j.number("musical_yaw_tau_s", yawMusicalTau);
+        j.number("bias_xy_tau_s", biasTauFast);
+        j.number("bias_z_tau_s", biasTauSlowZ);
+        j.number("bias_z_engage_s", zBiasEngageTime);
+        j.number("gyro_filter_tau_s", gyroFilterTau);
+        j.number("accel_filter_tau_s", accelFilterTau);
+        j.number("variance_tau_s", varianceWindowTau);
+        j.number("gyro_variance_dps2", gyroVarThreshold);
+        j.number("accel_variance_g2", accelVarThreshold);
+        j.number("jerk_reject_gps", jerkRejectThreshold);
+        j.number("rate_reject_dps", gyroRateRejectThreshold);
     }
 
 protected:

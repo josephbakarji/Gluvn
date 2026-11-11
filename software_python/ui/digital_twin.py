@@ -7,7 +7,9 @@ import sys
 import time
 import html
 from collections import deque
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.port_read import Reader
 from core.pose_provider import firmware_pose   # fallback only; see _apply_sample_to_hand
 

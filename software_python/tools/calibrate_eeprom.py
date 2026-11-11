@@ -9,6 +9,9 @@ import os
 import queue
 import threading
 import numpy as np
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.port_read import Reader
 from core.__init__ import BLE_NAME_R, BLE_NAME_L
 

@@ -372,6 +372,38 @@ public:
     void setNavStationaryVectorResidualExitThreshold(float g) { navVectorResidualExitThresholdG_ = constrain(g, 0.0f, 2.0f); }
     void setNavDetectorTimeConstant(float seconds)    { navDetectorTauSec_ = constrain(seconds, 0.005f, 2.0f); }
 
+    // Read-only acquisition configuration; field names carry units.
+    template<class Json> void captureConfiguration(Json& j) const {
+        j.number("accel_noise_g_sqrt_hz", accelNoiseDensity_);
+        j.number("gyro_noise_dps_sqrt_hz", gyroNoiseDensity_);
+        j.number("accel_bias_walk_g_sqrt_s", accelBiasRandomWalk_);
+        j.number("gyro_bias_walk_dps_sqrt_s", gyroBiasRandomWalk_);
+        j.number("zupt_noise_mps", zuptVelNoiseStd_);
+        j.number("zupt_min_still_s", zuptMinStationaryTime_);
+        j.number("zupt_bypass_s", zuptGateBypassTime_);
+        j.number("zupt_bypass_starved_s", zuptGateBypassTimeStarved_);
+        j.number("zupt_gate_d2", zuptGateChiSq_);
+        j.number("zupt_starvation_s", zuptStarvationThresholdSec_);
+        j.number("attitude_noise_rad", attitudeMeasNoiseStd_);
+        j.number("attitude_yaw_variance", attitudeYawVarianceRad2_);
+        j.number("attitude_gate_d2", attitudeGateChiSq_);
+        j.number("attitude_bypass_samples", attitudeGateBypassStreak_);
+        j.number("accel_bias_limit_g", accelBiasLimitG_);
+        j.number("gyro_bias_limit_dps", gyroBiasLimitDps_);
+        j.number("accel_bias_init_s", accelBiasInitWindowSec_);
+        j.number("stationary_enter_dps", navGyroMagThresholdDps_);
+        j.number("stationary_exit_dps", navGyroMagExitThresholdDps_);
+        j.number("gyro_variance_dps2", navGyroVarThresholdDps2_);
+        j.number("linear_accel_variance_g2", navFLinearVarThresholdG2_);
+        j.number("detector_tau_s", navDetectorTauSec_);
+        j.number("linear_accel_enter_g", navVectorResidualThresholdG_);
+        j.number("linear_accel_exit_g", navVectorResidualExitThresholdG_);
+        j.number("gravity_trust_floor_g", gravityLinAccelTrustFloorG_);
+        j.number("gravity_trust_ceil_g", gravityLinAccelTrustCeilG_);
+        j.boolean("tangent_gravity", useTangentPlaneGravityUpdate_);
+        j.boolean("block_gravity_bias", blockBiasCorrectionFromGravityUpdate_);
+    }
+
 private:
     bool  armed_;
     float pNav_[3];
