@@ -9,7 +9,7 @@ import struct
 import threading
 import time
 
-SPEC_PATH = Path(__file__).resolve().parents[1] / "aaai" / "capture_contract_v2.json"
+SPEC_PATH = Path(__file__).resolve().parent / "capture_contract_v2.json"
 SPEC = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
 FIELDS = SPEC["sample_fields"]
 SAMPLE = struct.Struct(">" + "".join(str(f["count"]) + f["code"] for f in FIELDS))
