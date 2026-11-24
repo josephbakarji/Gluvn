@@ -148,7 +148,13 @@ const unsigned long USB_BAUD = 500000;  // keep in sync with __init__.py on the 
 // -------------------------------------------------------
 // Runtime config
 // -------------------------------------------------------
+// LIVE3 build convenience: compile with -DGLUVN_LEFT for the left glove (arduino-cli
+// --build-property compiler.cpp.extra_flags=-DGLUVN_LEFT); default remains the right glove.
+#ifdef GLUVN_LEFT
+char hand                 = 'l';
+#else
 char hand                 = 'r';
+#endif
 bool streamGyroInImuSlots = false;   // telemetry encoding only — see USE_GYRO_ON/OFF doc above
 bool send_quat            = false;   // QUAT_STREAM_ON/OFF
 bool send_nav_quat        = false;   // NAV_QUAT_STREAM_ON/OFF
@@ -266,27 +272,36 @@ void processCommand(String cmd, bool fromBle=false);
 void runStartupGyroCalibration();
 
 #include "CaptureV2Runtime.h"
+#include "LiveV3.h"        // LIVE3 instrument transport (additive; research capture v2 unchanged)
+bool imuFreshThisTick = false;
 
 class ConnCallbacks : public NimBLEServerCallbacks {
   void onMTUChange(uint16_t mtu, NimBLEConnInfo& connInfo) override {
     captureV2.mtu = mtu;
+    live3.mtu = mtu;
   }
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     captureV2.resetBleTransport();
     captureV2.mtu = connInfo.getMTU();
     bleConnected = true;
     captureV2.bleConnIntervalUs = connInfo.getConnInterval()*1250U;
-    server->updateConnParams(connInfo.getConnHandle(), 8, 8, 0, 400);
+    live3.onConnect(connInfo.getConnHandle(), connInfo.getMTU(), connInfo.getConnInterval()*1250U);
+    // LIVE3: 7.5-10 ms interval and a 2 s supervision timeout (a dead link is detected and re-established
+    // sooner); research capture keeps its original 10 ms / 4 s request.
+    if (live3.active) server->updateConnParams(connInfo.getConnHandle(), 6, 8, 0, 200);
+    else server->updateConnParams(connInfo.getConnHandle(), 8, 8, 0, 400);
     // ATT MTU alone does not request the radio's 251-byte data length.
     server->setDataLen(connInfo.getConnHandle(), 251);
   }
   void onConnParamsUpdate(NimBLEConnInfo& connInfo) override {
     captureV2.bleConnIntervalUs = connInfo.getConnInterval()*1250U;
+    live3.connIntervalUs = connInfo.getConnInterval()*1250U;
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     bleConnected = false;
     captureV2.bleSubscribed.store(false);
     captureV2.disconnected.store(true);
+    live3.onDisconnect();          // not fatal: sampling continues into the history ring
     NimBLEDevice::startAdvertising();
   }
 };
@@ -294,6 +309,7 @@ class ConnCallbacks : public NimBLEServerCallbacks {
 class TxCallbacks : public NimBLECharacteristicCallbacks {
   void onSubscribe(NimBLECharacteristic* c, NimBLEConnInfo& connInfo, uint16_t value) override {
     captureV2.bleSubscribed.store((value & 1) != 0);
+    live3.onSubscribe((value & 1) != 0);
   }
   void onStatus(NimBLECharacteristic* c, NimBLEConnInfo& connInfo, int code) override {
     captureV2.onBleStatus(code);
@@ -566,6 +582,10 @@ void buildAndSendFrame() {
 }
 
 void publishSensorFrame(uint32_t scanStart, uint32_t scanEnd) {
+  if (live3.active) {   // LIVE3 owns the stream while active (research START is refused meanwhile)
+    live3.emit(imuFreshThisTick ? lastSampleUs : scanEnd, ax, ay, az, gx, gy, gz, flexValues, fsrValues, imuFreshThisTick);
+    return;
+  }
   if (captureV2.active) captureV2.emit(scanStart, scanEnd);
   else if (print_mode == 0 && captureV2.legacyReady()) buildAndSendFrame();
 }
@@ -582,6 +602,15 @@ bool   commandComplete = false;
 
 void processCommand(String cmd, bool fromBle) {
   cmd.trim();
+  {
+    String upper = cmd; upper.toUpperCase();
+    if (upper.startsWith("LIVE3_")) {
+      // LIVE3 and research capture are mutually exclusive.
+      if (!(captureV2.active || captureV2.hasWork() || captureV2.stopPending)) live3.command(upper, bleServer);
+      return;
+    }
+    if (live3.active && upper.startsWith("CAPTURE_V2_")) return;
+  }
   if (captureV2.command(cmd, fromBle)) { bundledFrameCount = 0; return; }
   cmd.toUpperCase();
   if (!captureV2.legacyCommand(cmd, fromBle)) return;
@@ -662,7 +691,7 @@ void processCommand(String cmd, bool fromBle) {
     navEkf.reset(); Serial.println("POSITION_RESET");
   } else if (cmd == "RECALIBRATE_GYRO") {
     // Existing BLE clients need a pre-calibration toggle baseline to confirm completion.
-    if (print_mode == 0 && captureV2.legacyReady()) { buildAndSendFrame(); flushBundle(); }
+    if (print_mode == 0 && captureV2.legacyReady() && !live3.active) { buildAndSendFrame(); flushBundle(); }
     captureV2.calibrationOrigin = "command";
     runStartupGyroCalibration();   // blocks; prints GYRO_CAL_START/DONE itself
   } else if (cmd == "PREFS_SAVE") {
@@ -1011,7 +1040,9 @@ void setup() {
   bleCommandQueue = xQueueCreate(BLE_CMD_QUEUE_LEN, sizeof(BleCmdMsg));
   NimBLEDevice::init(hand == 'r' ? "Gluvn_R" : "Gluvn_L");
   NimBLEDevice::setMTU(247);
-  NimBLEDevice::setPower(ESP_PWR_LVL_N0);
+  // LIVE3 (14 Nov 2026): maximum ESP32 TX power for link margin against body shadowing (the stick is worn on the
+  // forearm, the hand and torso often block the line of sight). Costs a few mA during radio events only.
+  NimBLEDevice::setPower(9);  // NimBLE 2.x API uses dBm, not esp_power_level_t
 
   bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new ConnCallbacks());
@@ -1038,6 +1069,9 @@ void setup() {
   NimBLEAdvertisementData scanRespData;
   scanRespData.setName(hand == 'r' ? "Gluvn_R" : "Gluvn_L");
   adv->setScanResponseData(scanRespData);
+  // Fast advertising (20-40 ms) so a host that lost the link reconnects within a fraction of a second.
+  adv->setMinInterval(32);
+  adv->setMaxInterval(64);
 
   NimBLEDevice::startAdvertising();
   Serial.println("Gluvn ready");
@@ -1057,7 +1091,7 @@ void loop() {
   static bool btnHoldHandled = false;
   static bool btnPressSeen = false;
   static bool btnCaptureSuppressed = false;
-  if (captureV2.active || captureV2.hasWork()) {
+  if (live3.active || captureV2.active || captureV2.hasWork()) {
     if (M5.BtnA.isPressed()) btnCaptureSuppressed = true;
     btnPressSeen = false;
     btnHoldHandled = false;
@@ -1106,7 +1140,7 @@ void loop() {
   // Diagnostics do not wake the estimators; they observe an active estimator
   // stream and require text mode when their output is enabled.
   // Estimators now wake only for actual consumers (motion/nav_quat stream).
-  navEkfNeeded = send_motion || send_nav_quat || captureV2.active;
+  navEkfNeeded = !live3.active && (send_motion || send_nav_quat || captureV2.active);
   if (navEkfNeeded && !navEkfWasNeeded) {
     captureV2.reset("estimator_wake");
     navEkf.reset();
@@ -1115,22 +1149,28 @@ void loop() {
 
   // Drain research TX before acquisition; its UART FIFO may be smaller than one frame.
   if (captureV2.active || captureV2.hasWork() || captureV2.stopPending) captureV2.service();
+  live3.service(txChar, (uint8_t)hand, lowBatteryFlag, cachedBatteryPct);
 
   unsigned long now  = millis();   // 5 Hz display timer
-  uint32_t      nowUs = micros();  // 125 Hz sample deadline scheduler
+  uint32_t      nowUs = micros();  // sample deadline scheduler (125 Hz research/legacy, LIVE3 rate when live)
+  // LIVE3 runs at its own rate (default 100 Hz = 2 samples per 50 Hz host decision, one sample per 10 ms
+  // connection event); research capture keeps SENSOR_RATE_HZ.
+  const uint32_t activeIntervalUs = live3.active ? live3.intervalUs : SENSOR_INTERVAL_US;
 
   if ((int32_t)(nowUs - nextSampleUs) >= 0) {
     if (captureV2.active) captureV2.beginTick();
-    if ((int32_t)(nowUs - nextSampleUs) > (int32_t)(3 * SENSOR_INTERVAL_US)) {
+    if ((int32_t)(nowUs - nextSampleUs) > (int32_t)(3 * activeIntervalUs)) {
       nextSampleUs = nowUs;
     }
-    nextSampleUs += SENSOR_INTERVAL_US;
+    nextSampleUs += activeIntervalUs;
+    imuFreshThisTick = false;
 
     // A missed IMU sample no longer skips the whole loop — MUX reads, frame
     // send, and display still run this tick on the last good sample; only
     // the block that would consume a fresh sample is skipped.
     if (M5.Imu.update()) {
       diagNoteImuFresh();
+      imuFreshThisTick = true;
 
       auto imu = M5.Imu.getImuData();
       uint32_t sampleUs = micros();
@@ -1157,6 +1197,7 @@ void loop() {
 
       bool gyroFinite  = isfinite(imu.gyro.x)  && isfinite(imu.gyro.y)  && isfinite(imu.gyro.z);
       bool accelFinite = isfinite(imu.accel.x) && isfinite(imu.accel.y) && isfinite(imu.accel.z);
+      imuFreshThisTick = gyroFinite && accelFinite;
       diagNoteRawGyro(imu.gyro.x, imu.gyro.y, imu.gyro.z);
       diagNoteRawAccel(imu.accel.x, imu.accel.y, imu.accel.z);
 
@@ -1259,11 +1300,14 @@ void loop() {
     updateBatteryStatus();
     updateDisplayDimming();
     // Full-screen SPI transfers must not stall the bounded research TX queue.
-    if (!captureV2.active && !captureV2.hasWork() && !captureV2.stopPending) updateDisplay();
+    // LIVE3: no full-screen SPI redraw while streaming (a 240x135 push blocks the loop ~10 ms -> sample jitter
+    // and delayed notifications); the stick keeps its last screen.
+    if (!captureV2.active && !captureV2.hasWork() && !captureV2.stopPending && !live3.active) updateDisplay();
   }
 
   diagPrintSysLineIfDue(ahrs, navEkf, write_binary || captureV2.active || captureV2.hasWork());
   captureV2.service();
+  live3.service(txChar, (uint8_t)hand, lowBatteryFlag, cachedBatteryPct);
 
   diagLoopTimingEnd();
 }
